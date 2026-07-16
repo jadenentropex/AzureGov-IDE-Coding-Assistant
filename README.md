@@ -1,2 +1,2 @@
 # AzureGov-IDE-Coding-Assistant
-An Claude Code/Codex like agent completely within Azure Gov (ITAR, CMMC compliant)
+An Claude Code/Codex like tool completely within Azure Gov (ITAR, CMMC compliant)
