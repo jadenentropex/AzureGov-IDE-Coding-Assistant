@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "rootDir": "src",
+    "outDir": "dist",
+    "types": ["node", "vscode"],
+    "lib": ["ES2023"],
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": ["src/**/*"]
+}

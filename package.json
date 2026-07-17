@@ -1,0 +1,22 @@
+{
+  "name": "azgov-ide-workspace",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Monorepo root for the Azure-native, VS Code AI coding assistant for CMMC/CUI. Agent brain = Azure OpenAI Responses API in Azure US Government; code context never leaves the Gov boundary.",
+  "license": "Apache-2.0",
+  "author": "Entropex, LLC (https://entropex.io)",
+  "homepage": "https://entropex.io",
+  "repository": { "type": "git", "url": "https://github.com/jadenentropex/AzureGov-IDE-Coding-Assistant.git" },
+  "bugs": { "url": "https://github.com/jadenentropex/AzureGov-IDE-Coding-Assistant/issues" },
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "smoke": "npm run smoke -w @azgov-ide/agents-client"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

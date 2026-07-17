@@ -1,0 +1,27 @@
+{
+  "name": "@azgov-ide/agents-client",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Portable, VS-Code-agnostic agent brain: AgentBrain interface + Azure OpenAI Responses API adapter (store=false) + client-side agent loop. Zero runtime dependencies.",
+  "license": "Apache-2.0",
+  "author": "Entropex, LLC (https://entropex.io)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "smoke": "tsx src/dev/smoke.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

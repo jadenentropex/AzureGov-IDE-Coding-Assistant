@@ -1,0 +1,128 @@
+{
+  "name": "azuregov-ide-coding-assistant",
+  "displayName": "AzureGov IDE Coding Assistant",
+  "description": "Azure-native AI coding agent for CMMC/CUI — Azure OpenAI Responses API in Azure US Government. Code context never leaves the Gov boundary.",
+  "version": "0.0.11",
+  "publisher": "azgov-ide",
+  "private": true,
+  "license": "Apache-2.0",
+  "author": "Entropex, LLC (https://entropex.io)",
+  "homepage": "https://entropex.io",
+  "repository": { "type": "git", "url": "https://github.com/jadenentropex/AzureGov-IDE-Coding-Assistant.git" },
+  "bugs": { "url": "https://github.com/jadenentropex/AzureGov-IDE-Coding-Assistant/issues" },
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": ["AI", "Chat", "Programming Languages"],
+  "main": "./dist/extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "azgovIde", "title": "AzureGov IDE", "icon": "media/icon.svg" }
+      ]
+    },
+    "views": {
+      "azgovIde": [
+        { "id": "azgovIde.chat", "name": "Agent", "type": "webview" }
+      ]
+    },
+    "chatParticipants": [
+      {
+        "id": "azgov-ide.coder",
+        "name": "azgov",
+        "fullName": "AzureGov Coder",
+        "description": "In-boundary coding agent (Azure OpenAI, US Gov). Ask me to explain, edit, or run tasks.",
+        "isSticky": true,
+        "commands": [
+          { "name": "explain", "description": "Explain the selected code or a file" },
+          { "name": "fix", "description": "Propose a fix for the current problem or selection" }
+        ]
+      }
+    ],
+    "configuration": {
+      "title": "AzureGov IDE Coding Assistant",
+      "properties": {
+        "azgovIde.endpoint": {
+          "type": "string",
+          "default": "https://aoai-azgov-ide.openai.azure.us",
+          "markdownDescription": "Azure OpenAI **Gov** endpoint (`*.openai.azure.us`)."
+        },
+        "azgovIde.model": {
+          "type": "string",
+          "enum": ["gpt-4.1", "gpt-5.1"],
+          "enumDescriptions": [
+            "Fast workhorse — everyday edits, explain, quick fixes",
+            "Deep reasoning — complex/multi-file tasks (slower, DataZone)"
+          ],
+          "default": "gpt-4.1",
+          "description": "Model deployment. Pick by task complexity (also switchable from the status bar)."
+        },
+        "azgovIde.authMode": {
+          "type": "string",
+          "enum": ["managed", "entra", "key"],
+          "enumDescriptions": [
+            "Azure VM managed identity via local metadata (no sign-in; best for in-boundary VMs/PAWs)",
+            "Keyless Microsoft Entra ID via device code (sign in with a code on any device)",
+            "Break-glass API key stored in SecretStorage"
+          ],
+          "default": "managed",
+          "markdownDescription": "Authentication to the Gov endpoint. `managed` uses the Azure VM's managed identity (no interactive sign-in) — the VM identity must hold the **Cognitive Services OpenAI User** role. `entra` uses the device-code flow. `key` uses a stored API key."
+        },
+        "azgovIde.tenantId": {
+          "type": "string",
+          "default": "",
+          "description": "Entra tenant ID (GUID) to pin for keyless auth. Optional."
+        },
+        "azgovIde.store": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Persist server-side conversation state. **Keep false for CMMC/CUI** — no conversation state at rest in Azure."
+        },
+        "azgovIde.approveWrites": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require confirmation before file writes and terminal commands (ignored in Auto mode)."
+        },
+        "azgovIde.autoCompactTokens": {
+          "type": "number",
+          "default": 100000,
+          "markdownDescription": "Auto-compact the conversation when its estimated size exceeds this many tokens (summarizes older context to free tokens/cost). Set to `0` to disable. You can also type `/compact` anytime."
+        },
+        "azgovIde.pricing": {
+          "type": "object",
+          "default": {},
+          "markdownDescription": "Per-model price in USD **per 1,000,000 tokens**, used to estimate spend. Override the built-in estimates with your actual Azure Government contract rates, e.g. `{ \"gpt-4.1\": { \"input\": 2.0, \"output\": 8.0 } }`.",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "input": { "type": "number" },
+              "output": { "type": "number" }
+            }
+          }
+        }
+      }
+    },
+    "commands": [
+      { "command": "azgovIde.ask", "title": "AzureGov IDE: Ask…" },
+      { "command": "azgovIde.selectModel", "title": "AzureGov IDE: Select model" },
+      { "command": "azgovIde.setApiKey", "title": "AzureGov IDE: Set break-glass API key" },
+      { "command": "azgovIde.clearApiKey", "title": "AzureGov IDE: Clear break-glass API key" }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "package": "npx --yes @vscode/vsce package --no-dependencies"
+  },
+  "dependencies": {
+    "@azgov-ide/agents-client": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/vscode": "^1.95.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.2"
+  }
+}
