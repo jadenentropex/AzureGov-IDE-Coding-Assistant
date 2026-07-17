@@ -30,7 +30,9 @@ const RULES: Rule[] = [
   { re: /\bAccountKey=[^;"'\s]+/gi, to: 'AccountKey=[REDACTED]' },
   { re: /\bsig=[A-Za-z0-9%]{20,}/gi, to: 'sig=[REDACTED]' }, // SAS signature
   { re: /(--password|--client-secret|--secret|--api-key|--account-key|--sas-token|-p)(\s+)("[^"]*"|'[^']*'|[^\s"']+)/gi, to: '$1$2[REDACTED]' },
-  { re: /\b(pass(?:word)?|pwd|secret|token|api[_-]?key|apikey|client[_-]?secret|access[_-]?key|connection[_-]?string)\b(\s*["']?\s*[:=]\s*["']?)([^\s"',;)}&]{4,})/gi, to: '$1$2[REDACTED]' },
+  // Leading lookbehind (not \b) so underscore/dash-prefixed env-var names redact too, e.g.
+  // ARM_CLIENT_SECRET, AWS_SECRET_ACCESS_KEY, DB_PASSWORD, MY_API_KEY.
+  { re: /(?<![A-Za-z0-9])(pass(?:word)?|pwd|secret|token|api[_-]?key|apikey|client[_-]?secret|access[_-]?key|connection[_-]?string)(\s*["']?\s*[:=]\s*["']?)([^\s"',;)}&]{4,})/gi, to: '$1$2[REDACTED]' },
 ];
 
 /** Mask secret values in a string. Pure; safe to call on any text. */

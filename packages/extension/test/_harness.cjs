@@ -9,7 +9,9 @@ const bundleCache = new Map();
 
 function bundle(relSrc) {
   if (bundleCache.has(relSrc)) return bundleCache.get(relSrc);
-  const out = path.join(os.tmpdir(), 'azgov-test-' + relSrc.replace(/[\\/.]/g, '_') + '.cjs');
+  // Unique per process (node --test runs test files concurrently) so two files bundling the same
+  // module do not race on one temp path and corrupt each other's output.
+  const out = path.join(os.tmpdir(), `azgov-test-${process.pid}-${relSrc.replace(/[\\/.]/g, '_')}.cjs`);
   esbuild.buildSync({
     entryPoints: [path.join(EXT, relSrc)],
     bundle: true, platform: 'node', format: 'cjs', external: ['vscode'],

@@ -24,8 +24,9 @@ export interface ChangeResult {
   error?: string;
   exitCode?: number;
   output?: string;
-  /** Undo info for a file write: restore `before` (or delete when it was newly created). */
-  undo?: { path: string; rel: string; before: string | null };
+  /** Undo info for a file write: restore `before` (or delete when it was newly created).
+   *  `afterSha` is the SHA-256 the agent wrote, so a later undo can detect intervening edits. */
+  undo?: { path: string; rel: string; before: string | null; afterSha: string };
 }
 
 export interface ToolDeps {
@@ -280,7 +281,7 @@ export function createTools(deps: ToolDeps): Tool[] {
           deps.log(`wrote ${rel} (+${added} -${removed})`);
           return {
             message: `Wrote ${rel} (+${added} -${removed}).`,
-            undo: { path: file, rel, before: existed ? oldContent : null },
+            undo: { path: file, rel, before: existed ? oldContent : null, afterSha: sha256(content) },
           };
         });
       },

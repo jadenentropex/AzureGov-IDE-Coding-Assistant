@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
-import { verifyAuditChain, type AuditLog } from './audit';
+import type { AuditLog } from './audit';
 
 /**
  * Machine-derived compliance evidence (roadmap P0-8).
@@ -153,7 +153,7 @@ function buildControls(cfg: vscode.WorkspaceConfiguration, verify: { ok: boolean
     },
     {
       control: '3.3.8', family: 'AU', title: 'Protect audit information from unauthorized modification',
-      implementation: 'Hash-chained log detects any edit/insert/delete; events are forwarded off-box to Log Analytics for an independent copy.',
+      implementation: 'Hash-chained log anchored to a persisted tip detects edit, insert, delete, and tail-truncation; events are also forwarded off-box to Log Analytics as an independent copy (the anchor of last resort against local rewrite).',
       evidence: `chainVerified=${yn(verify.ok)}${verify.ok ? '' : ` (broken at ${verify.brokenAt}: ${verify.error})`}, offBoxForwarding=${yn(!!ingest)}`,
       status: verify.ok ? 'implemented' : 'attention',
     },
@@ -192,7 +192,7 @@ function buildControls(cfg: vscode.WorkspaceConfiguration, verify: { ok: boolean
 
 export async function generateEvidence(ctx: vscode.ExtensionContext, audit: AuditLog, output: vscode.OutputChannel): Promise<void> {
   const cfg = vscode.workspace.getConfiguration('azgovIde');
-  const verify = await verifyAuditChain(audit.filePath);
+  const verify = await audit.verify();
   const stats = await auditStats(audit.filePath, !!cfg.get<string>('auditIngestionEndpoint', ''));
   const controls = buildControls(cfg, verify, stats);
 

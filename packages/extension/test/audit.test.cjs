@@ -7,7 +7,7 @@ const { loadModule } = require('./_harness.cjs');
 
 const { verifyAuditChain, sha256, decodeTokenIdentity } = loadModule('src/audit.ts', {});
 
-// Build a valid chain the same way AuditLog.append does.
+// Build a valid chain the same way AuditLog.append does. Returns the tip {lastHash, seq}.
 function writeChain(file, events, { tamper } = {}) {
   let prev = 'GENESIS';
   const lines = events.map((e, i) => {
@@ -16,9 +16,11 @@ function writeChain(file, events, { tamper } = {}) {
     prev = hash;
     return JSON.stringify({ ...base, hash });
   });
+  const tip = { lastHash: prev, seq: lines.length };
   if (tamper === 'edit') { const ev = JSON.parse(lines[1]); ev.type = 'EVIL'; lines[1] = JSON.stringify(ev); }
   if (tamper === 'delete') lines.splice(1, 1);
   fs.writeFileSync(file, lines.join('\n') + '\n', 'utf8');
+  return tip;
 }
 
 function tmp() { return path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'audit-')), 'audit.jsonl'); }
@@ -43,6 +45,30 @@ test('a deleted event is detected (prevHash mismatch)', async () => {
   const r = await verifyAuditChain(f);
   assert.equal(r.ok, false);
   assert.equal(r.brokenAt, 2);
+});
+
+test('tail-truncation is detected with the persisted tip anchor', async () => {
+  const f = tmp();
+  const tip = writeChain(f, [{ type: 'session_start' }, { type: 'tool_call' }, { type: 'turn' }]);
+  // Remove the last event line (erasing recent records).
+  const lines = fs.readFileSync(f, 'utf8').split('\n').filter((l) => l.trim());
+  fs.writeFileSync(f, lines.slice(0, 2).join('\n') + '\n', 'utf8');
+  // Without the anchor, a truncated chain still looks internally consistent (documents the limit).
+  assert.equal((await verifyAuditChain(f)).ok, true);
+  // With the anchor, the missing tail is caught.
+  const r = await verifyAuditChain(f, tip);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /truncat|count/i);
+});
+
+test('a full rewrite that omits an event is detected with the anchor', async () => {
+  const f = tmp();
+  const tip = writeChain(f, [{ type: 'session_start' }, { type: 'evil_tool' }, { type: 'turn' }]);
+  // Rewrite from genesis omitting the evil event, recomputing all hashes (trivial without a key).
+  writeChain(f, [{ type: 'session_start' }, { type: 'turn' }]);
+  assert.equal((await verifyAuditChain(f)).ok, true); // internally valid
+  const r = await verifyAuditChain(f, tip); // but the tip no longer matches
+  assert.equal(r.ok, false);
 });
 
 test('decodeTokenIdentity extracts managed-identity claims', () => {

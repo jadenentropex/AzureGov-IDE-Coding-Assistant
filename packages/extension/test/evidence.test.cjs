@@ -6,6 +6,7 @@ const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { loadModule } = require('./_harness.cjs');
 
+const { verifyAuditChain } = loadModule('src/audit.ts', {});
 const sha256 = (s) => createHash('sha256').update(s).digest('hex');
 
 function writeChain(file, events, { tamper } = {}) {
@@ -34,7 +35,8 @@ async function run(settings, auditEvents, opts = {}) {
   writeChain(auditFile, auditEvents, opts);
   const notes = [];
   const ev = loadModule('src/evidence.ts', vscodeMock(settings, gsDir, notes));
-  await ev.generateEvidence({ globalStorageUri: { fsPath: gsDir } }, { filePath: auditFile }, { appendLine() {} });
+  const fakeAudit = { filePath: auditFile, verify: () => verifyAuditChain(auditFile) };
+  await ev.generateEvidence({ globalStorageUri: { fsPath: gsDir } }, fakeAudit, { appendLine() {} });
   const dir = path.join(gsDir, 'evidence');
   const files = fs.readdirSync(dir);
   const bundle = JSON.parse(fs.readFileSync(path.join(dir, files.find((f) => f.endsWith('.json'))), 'utf8'));

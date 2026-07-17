@@ -11,8 +11,8 @@ import {
 import { readConfig, assertBoundary } from './config';
 import { getTokenProvider } from './auth';
 import { createTools, type ChangePreview, type ChangeResult } from './tools';
-import { computeCost, fmtUsd } from './pricing';
-import { AuditLog, decodeTokenIdentity } from './audit';
+import { computeCost, fmtUsd, isPriced } from './pricing';
+import { AuditLog, decodeTokenIdentity, sha256 } from './audit';
 import { redactIfEnabled } from './redact';
 
 const READONLY_TOOL_NAMES = new Set(['list_dir', 'read_file', 'grep']);
@@ -80,8 +80,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private actorResolved = false;
   private startedSessions = new Set<string>();
   private budgetHit = false;
+  private budgetPriceWarned = new Set<string>();
   /** Undo entries for applied file writes (most recent last), for one-click rollback. */
-  private undoStack: { id: string; path: string; rel: string; before: string | null }[] = [];
+  private undoStack: { id: string; path: string; rel: string; before: string | null; afterSha: string }[] = [];
 
   /** Post an inline change/approval card; resolve when the user decides (or auto). */
   private requestChange = (preview: ChangePreview, needsApproval: boolean): Promise<{ approved: boolean; id: string }> => {
@@ -123,8 +124,28 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   };
 
   /** Restore a recorded file write (delete if it was newly created). Returns whether it applied. */
-  private async revert(entry: { id: string; path: string; rel: string; before: string | null }): Promise<boolean> {
+  private async revert(entry: { id: string; path: string; rel: string; before: string | null; afterSha: string }): Promise<boolean> {
     try {
+      // Guard against destroying edits made since the agent wrote the file: if the current bytes
+      // no longer match what the agent wrote, confirm before overwriting/deleting.
+      let current: string | null = null;
+      try {
+        current = await fsp.readFile(entry.path, 'utf8');
+      } catch {
+        current = null;
+      }
+      if (current !== null && sha256(current) !== entry.afterSha) {
+        const verb = entry.before === null ? 'delete' : 'revert';
+        const pick = await vscode.window.showWarningMessage(
+          `${entry.rel} has changed since the agent wrote it. Undo will ${verb} it and discard those later changes.`,
+          { modal: true },
+          'Undo anyway',
+        );
+        if (pick !== 'Undo anyway') {
+          this.post({ type: 'undoResult', id: entry.id, ok: false, message: 'cancelled - file changed since the write' });
+          return false;
+        }
+      }
       if (entry.before === null) await fsp.rm(entry.path, { force: true });
       else await fsp.writeFile(entry.path, entry.before, 'utf8');
       this.undoStack = this.undoStack.filter((e) => e.id !== entry.id);
@@ -294,6 +315,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    // Cost budget can only be enforced when a price is known for the model. In Azure Gov the
+    // deployment name is org-chosen, so an unpriced model would make the budget a silent no-op -
+    // warn once per chat so the admin adds an azgovIde.pricing entry.
+    if (cfg.costBudgetUsd > 0 && !isPriced(cfg.model) && !this.budgetPriceWarned.has(this.current.id)) {
+      this.budgetPriceWarned.add(this.current.id);
+      this.post({
+        type: 'error',
+        message: `Cost budget is set (${fmtUsd(cfg.costBudgetUsd)}) but no price is configured for model "${cfg.model}", so the budget cannot be enforced. Add it under azgovIde.pricing (USD per 1,000,000 tokens) to enable enforcement.`,
+      });
+      void this.audit.append('budget_unpriced', this.current.id, { model: cfg.model, budgetUsd: cfg.costBudgetUsd });
+    }
+
     // Cost budget: refuse to start a turn once this chat has reached its per-chat budget.
     if (cfg.costBudgetUsd > 0 && this.current.costUsd >= cfg.costBudgetUsd) {
       this.post({
@@ -301,6 +334,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         message: `Cost budget of ${fmtUsd(cfg.costBudgetUsd)} reached for this chat (spent ${fmtUsd(this.current.costUsd)}). Start a new chat or raise azgovIde.costBudgetUsd.`,
       });
       void this.audit.append('budget_block', this.current.id, { costUsd: this.current.costUsd, budgetUsd: cfg.costBudgetUsd });
+      // Drop any messages queued behind this one - they cannot run under the current budget, and
+      // leaving them stranded would let them execute unexpectedly after the budget is later raised.
+      if (this.queue.length) {
+        this.queue = [];
+        this.post({ type: 'queueCleared' });
+        this.post({ type: 'status', text: 'Queued messages were cleared because the cost budget is reached.' });
+      }
       return;
     }
 
@@ -567,6 +607,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     if (!s) return;
     await this.saveCurrent();
     this.current = s;
+    // Rollback entries are per-chat and hold absolute paths from the previous chat; drop them so
+    // an Undo after switching chats cannot revert/delete a file from the wrong session.
+    this.undoStack = [];
     this.post({ type: 'loadSession', messages: s.messages, model: s.model });
     this.postTotals();
   }

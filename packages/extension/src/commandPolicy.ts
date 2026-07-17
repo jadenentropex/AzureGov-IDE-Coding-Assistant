@@ -34,7 +34,7 @@ export const NETWORK: RegExp[] = [
   /\b(nc|ncat|netcat|telnet|ftp|tftp|sftp|scp|rsync|ssh)\b/i,
 ];
 
-/** First executable token of a command, stripped of path and extension, lowercased. */
+/** First executable token of a single (unchained) command, stripped of path and extension. */
 export function firstExe(command: string): string {
   const m = command.trim().match(/^"([^"]+)"|^(\S+)/);
   let tok = (m?.[1] ?? m?.[2] ?? '').trim();
@@ -42,22 +42,48 @@ export function firstExe(command: string): string {
   return tok.replace(/\.(exe|cmd|bat|ps1|sh)$/i, '').toLowerCase();
 }
 
+/**
+ * Split a command line into the segments a shell would run separately, so the allowlist and the
+ * Auto-mode gate inspect EVERY executable, not just the first. Covers `&&`, `||`, `;`, `|`, `&`,
+ * newlines, and one level of command substitution (`$(...)` and backticks). This is a best-effort
+ * tokenizer, not a full shell parser: its job is to make chaining/substitution surface the extra
+ * executables to the allowlist rather than hide them behind an approved first token.
+ */
+function segments(command: string): string[] {
+  const out = command.split(/&&|\|\||[;&|\n]/);
+  const reSub = /\$\(([^()]*)\)|`([^`]*)`/g;
+  let m: RegExpExecArray | null;
+  while ((m = reSub.exec(command)) !== null) out.push(m[1] ?? m[2] ?? '');
+  return out.map((s) => s.trim()).filter(Boolean);
+}
+
+/** Every executable invoked by the command line (across chaining and substitution). */
+export function commandExes(command: string): string[] {
+  return segments(command).map(firstExe).filter(Boolean);
+}
+
 export interface CommandPolicyOpts {
   allowlist: string[];
   blockNetwork: boolean;
 }
 
-/** Whether the command's executable is on the (non-empty) allowlist. */
+/** Whether EVERY executable in the (possibly chained) command is on the non-empty allowlist. */
 export function isAllowlisted(command: string, allowlist: string[]): boolean {
   const al = allowlist.map((s) => s.toLowerCase());
-  return al.length > 0 && al.includes(firstExe(command));
+  if (al.length === 0) return false;
+  const exes = commandExes(command);
+  return exes.length > 0 && exes.every((e) => al.includes(e));
 }
 
 /** Reason the command must be blocked, or null if it may run (possibly with approval). */
 export function commandBlockReason(command: string, opts: CommandPolicyOpts): string | null {
   if (DENY.some((r) => r.test(command))) return 'BLOCKED: command matches a denied pattern.';
-  if (opts.allowlist.length > 0 && !isAllowlisted(command, opts.allowlist)) {
-    return `BLOCKED: '${firstExe(command)}' is not on the command allowlist (azgovIde.commandAllowlist).`;
+  if (opts.allowlist.length > 0) {
+    const al = opts.allowlist.map((s) => s.toLowerCase());
+    const bad = commandExes(command).filter((e) => !al.includes(e));
+    if (bad.length > 0) {
+      return `BLOCKED: ${bad.map((b) => `'${b}'`).join(', ')} not on the command allowlist (azgovIde.commandAllowlist). Chained or substituted commands must have every executable allowlisted.`;
+    }
   }
   if (opts.blockNetwork && NETWORK.some((r) => r.test(command))) {
     return 'BLOCKED: network/egress commands are disabled by policy (azgovIde.blockNetworkCommands) so CUI cannot leave the boundary. Use az / az network bastion tunnel for sanctioned access.';

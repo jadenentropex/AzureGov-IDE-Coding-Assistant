@@ -24,6 +24,16 @@ export function priceFor(model: string): ModelPrice {
   return overrides[model] ?? DEFAULT_PRICES[model] ?? { input: 0, output: 0 };
 }
 
+/**
+ * Whether a real price is known for a model. In Azure Gov the deployment name (what we send) is
+ * org-chosen and rarely matches a built-in price key, so a cost budget on an unpriced model would
+ * silently never trigger - callers use this to warn and prompt for an azgovIde.pricing entry.
+ */
+export function isPriced(model: string): boolean {
+  const overrides = vscode.workspace.getConfiguration('azgovIde').get<Record<string, ModelPrice>>('pricing', {});
+  return Boolean(overrides[model] ?? DEFAULT_PRICES[model]);
+}
+
 /** Cost in USD for a given token split on a model. */
 export function computeCost(model: string, inputTokens: number, outputTokens: number): number {
   const p = priceFor(model);

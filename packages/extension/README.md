@@ -100,9 +100,12 @@ possible audit source, so the audit log is the load-bearing NIST SP 800-171 AU c
 Every agent action (model calls, tool calls, file changes with before/after SHA-256,
 approvals, per-turn cost/tokens, errors) is written to an append-only JSONL log under the
 extension global storage. Each event is hash-chained to the previous one, so any edit,
-insertion, or deletion is detectable. Run "AzureGov IDE: Verify audit log integrity" to
-re-check the chain. Each event is attributed to the resolved Entra identity (managed
-identity object id, or the signed-in user) so actions trace to an individual.
+insertion, or deletion is detectable. The chain is also anchored to a persisted tip (last
+hash + event count), so tail-truncation or a full rewrite from genesis is caught too. Run
+"AzureGov IDE: Verify audit log integrity" to re-check the chain. Each event is attributed
+to the resolved Entra identity (managed identity object id, or the signed-in user) so
+actions trace to an individual. The off-box copy (below) is the tamper-evidence anchor of
+last resort against a local rewrite.
 
 Optional off-box forwarding: set auditIngestionEndpoint and auditDcrImmutableId to send a
 second, independent copy of every event to a Log Analytics workspace via the Azure Monitor
@@ -144,7 +147,9 @@ Injection and exfiltration defense:
   injection (the "lethal trifecta" of untrusted content, code execution, and
   exfiltration).
 - Command allowlist (azgovIde.commandAllowlist): if set, run_terminal only runs
-  allowlisted executables (for example az, git, terraform, npm, python).
+  allowlisted executables (for example az, git, terraform, npm, python). Every
+  executable in a chained or substituted command (&&, ;, |, $(...), backticks) must
+  be allowlisted, so a chained second command cannot ride in behind an approved one.
 - Egress guard (azgovIde.blockNetworkCommands): blocks ad-hoc network tools (curl,
   wget, scp, ssh, nc, and similar) so CUI cannot leave the boundary. Package managers
   and Azure CLI are unaffected.

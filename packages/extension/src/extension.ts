@@ -3,7 +3,7 @@ import { registerChatParticipant } from './chatParticipant';
 import { ChatViewProvider } from './chatView';
 import { runAsk } from './ask';
 import { setApiKey, clearApiKey, getMonitorToken } from './auth';
-import { AuditLog, verifyAuditChain } from './audit';
+import { AuditLog } from './audit';
 import { generateEvidence } from './evidence';
 
 let statusBar: vscode.StatusBarItem;
@@ -39,7 +39,7 @@ export function activate(ctx: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('azgovIde.clearApiKey', () => clearApiKey(ctx)),
     vscode.commands.registerCommand('azgovIde.selectModel', selectModel),
     vscode.commands.registerCommand('azgovIde.verifyAudit', async () => {
-      const r = await verifyAuditChain(audit.filePath);
+      const r = await audit.verify();
       if (r.ok) void vscode.window.showInformationMessage(`Audit log verified: ${r.events} events, hash chain intact.`);
       else void vscode.window.showErrorMessage(`Audit integrity FAILED at event ${r.brokenAt ?? '?'}: ${r.error ?? 'unknown'}`);
     }),

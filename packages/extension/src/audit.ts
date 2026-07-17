@@ -231,6 +231,16 @@ export class AuditLog {
     return this.file;
   }
 
+  /** The persisted chain tip (last hash + event count) used to anchor verification. */
+  get tip(): { lastHash: string; seq: number } {
+    return { lastHash: this.lastHash, seq: this.seq };
+  }
+
+  /** Verify the local chain against the persisted tip (detects truncation/rewrite too). */
+  verify(): Promise<{ ok: boolean; events: number; brokenAt?: number; error?: string }> {
+    return verifyAuditChain(this.file, this.tip);
+  }
+
   private enabled(): boolean {
     return vscode.workspace.getConfiguration('azgovIde').get<boolean>('auditEnabled', true);
   }
@@ -276,8 +286,17 @@ export class AuditLog {
   }
 }
 
-/** Verify the hash chain of an audit file. Detects any insertion, deletion, or edit. */
-export async function verifyAuditChain(file: string): Promise<{ ok: boolean; events: number; brokenAt?: number; error?: string }> {
+/**
+ * Verify the hash chain of an audit file. Walking from GENESIS detects any insertion, edit, or
+ * interior deletion. Pass `expected` (the tip persisted in globalState) to also detect
+ * tail-truncation and a full rewrite from genesis: the recomputed tip hash and event count must
+ * match the persisted values. Note the persisted tip is itself local; the tamper-EVIDENT anchor
+ * of last resort is the off-box copy forwarded to Log Analytics, which this cannot recompute.
+ */
+export async function verifyAuditChain(
+  file: string,
+  expected?: { lastHash: string; seq: number },
+): Promise<{ ok: boolean; events: number; brokenAt?: number; error?: string }> {
   let text: string;
   try {
     text = await fs.readFile(file, 'utf8');
@@ -297,6 +316,14 @@ export async function verifyAuditChain(file: string): Promise<{ ok: boolean; eve
     if (base['prevHash'] !== prev) return { ok: false, events: lines.length, brokenAt: i + 1, error: 'prevHash mismatch' };
     if (sha256(JSON.stringify(base) + prev) !== hash) return { ok: false, events: lines.length, brokenAt: i + 1, error: 'hash mismatch' };
     prev = hash as string;
+  }
+  if (expected && expected.seq > 0) {
+    if (lines.length !== expected.seq) {
+      return { ok: false, events: lines.length, brokenAt: lines.length, error: `event count ${lines.length} != expected ${expected.seq} (tail-truncated or rewritten)` };
+    }
+    if (prev !== expected.lastHash) {
+      return { ok: false, events: lines.length, brokenAt: lines.length, error: 'tip hash does not match the persisted anchor (log was rewritten)' };
+    }
   }
   return { ok: true, events: lines.length };
 }

@@ -37,6 +37,21 @@ test('masks key=value secrets', () => {
   assert.match(r, /other=fine/);
 });
 
+test('masks underscore/dash-prefixed env-var secret names', () => {
+  const cases = [
+    ['export ARM_CLIENT_SECRET=aBc7Q~verylongsecretvalue123 && terraform apply', 'aBc7Q~verylongsecretvalue123'],
+    ['AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIabcdef1234567890', 'wJalrXUtnFEMIabcdef1234567890'],
+    ['AZURE_CLIENT_SECRET=supersecretspvalue99', 'supersecretspvalue99'],
+    ['DB_PASSWORD=hunter2password', 'hunter2password'],
+    ['MY_API_KEY=abcd1234efgh5678', 'abcd1234efgh5678'],
+  ];
+  for (const [input, secret] of cases) {
+    const r = redactSecrets(input);
+    assert.match(r, /\[REDACTED\]/, `redacted: ${input}`);
+    assert.ok(!r.includes(secret), `secret gone: ${input}`);
+  }
+});
+
 test('masks private keys, AWS keys, storage AccountKey, and SAS sig', () => {
   assert.match(redactSecrets('-----BEGIN PRIVATE KEY-----\nMIIabc\n-----END PRIVATE KEY-----'), /\[REDACTED PRIVATE KEY\]/);
   assert.match(redactSecrets('id=AKIAIOSFODNN7EXAMPLE'), /\[REDACTED AWS KEY\]/);

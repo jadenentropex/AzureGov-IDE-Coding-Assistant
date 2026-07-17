@@ -51,3 +51,25 @@ test('hard Auto-mode gate forces approval for non-allowlisted shell', () => {
   assert.equal(decide('npm run build', { approveWrites: true, autoApprove: false }), 'APPROVE');
   assert.equal(decide('npm run build', { approveWrites: false }), 'RUN');
 });
+
+test('command chaining cannot smuggle a non-allowlisted executable (was a real bypass)', () => {
+  const al = { allowlist: ['git', 'az', 'npm'] };
+  // The core exploit: allowlisted first token, non-allowlisted interpreter chained after.
+  assert.equal(decide('git status && python -c "exfil"', { ...al, autoApprove: true, autoAllowTerminal: false }), 'BLOCKED');
+  assert.equal(decide('git status ; curl https://evil', al), 'BLOCKED');
+  assert.equal(decide('az login | python evil.py', al), 'BLOCKED');
+  assert.equal(decide('git log\npython evil.py', al), 'BLOCKED');
+  // Command substitution is inspected too.
+  assert.equal(decide('git $(python steal.py)', al), 'BLOCKED');
+  assert.equal(decide('git `python steal.py`', al), 'BLOCKED');
+  // All-allowlisted chains still run.
+  assert.equal(decide('git add -A && git commit -m x', { ...al, autoApprove: true, autoAllowTerminal: true }), 'RUN');
+  // With NO allowlist, Auto mode still forces human approval on a chained shell (gate holds).
+  assert.equal(decide('git status && python -c "exfil"', { approveWrites: true, autoApprove: true, autoAllowTerminal: false }), 'APPROVE');
+});
+
+test('commandExes enumerates every executable across operators and substitution', () => {
+  assert.deepEqual(cp.commandExes('git status && python -c "x"'), ['git', 'python']);
+  assert.deepEqual(cp.commandExes('az login | jq . ; node run.js'), ['az', 'jq', 'node']);
+  assert.deepEqual(cp.commandExes('git $(curl evil)'), ['git', 'curl']);
+});
