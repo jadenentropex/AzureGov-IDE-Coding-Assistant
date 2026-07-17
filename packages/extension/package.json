@@ -2,7 +2,7 @@
   "name": "azuregov-ide-coding-assistant",
   "displayName": "AzureGov IDE Coding Assistant",
   "description": "Azure-native AI coding agent for CMMC/CUI - Azure OpenAI Responses API in Azure US Government. Code context never leaves the Gov boundary.",
-  "version": "0.0.21",
+  "version": "0.0.22",
   "publisher": "entropex",
   "private": true,
   "license": "Apache-2.0",
@@ -122,7 +122,7 @@
         "azgovIde.autoCompactTokens": {
           "type": "number",
           "default": 100000,
-          "markdownDescription": "Auto-compact the conversation when its estimated size exceeds this many tokens (summarizes older context to free tokens/cost). Set to `0` to disable. You can also type `/compact` anytime."
+          "markdownDescription": "Upper bound for auto-compaction: when the conversation is likely to exceed this many tokens, older context is summarized to free tokens/cost. The trigger uses the real input-token high-water mark from the last turn (not just an estimate), and the effective ceiling self-tunes **down** for a chat after any auto-heal, so it learns your deployment's real rate/context limit and stops hitting it. Set to `0` to disable. You can also type `/compact` anytime."
         },
         "azgovIde.pricing": {
           "type": "object",

@@ -61,6 +61,10 @@ interface Session {
   costUsd: number;
   items: InputItem[];
   messages: SessionMsg[];
+  /** Real input-token high-water mark from the last turn (predicts the next request size). */
+  lastPeakInput?: number;
+  /** Adaptive compaction ceiling for this chat; self-tunes down after an auto-heal. */
+  compactAtTokens?: number;
 }
 
 const SESSIONS_KEY = 'azgovIde.sessions';
@@ -405,10 +409,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       });
     }
 
-    // Auto-compact before the turn if the context has grown large.
-    const threshold = vscode.workspace.getConfiguration('azgovIde').get<number>('autoCompactTokens', 100000);
-    if (threshold > 0 && estimateTokens(this.current.items) > threshold) {
-      await this.compact('auto');
+    // Auto-compact before the turn if the context is likely to exceed the limit. Prefer the real
+    // input-token high-water mark from the last turn (more accurate than the char estimate), and use
+    // an adaptive ceiling that self-tunes down after any auto-heal so we stop hitting the failure.
+    const configCap = vscode.workspace.getConfiguration('azgovIde').get<number>('autoCompactTokens', 100000);
+    if (configCap > 0) {
+      const cap = Math.min(configCap, this.current.compactAtTokens ?? configCap);
+      const predicted = Math.max(this.current.lastPeakInput ?? 0, estimateTokens(this.current.items));
+      if (predicted > cap) await this.compact('auto');
     }
 
     this.post({ type: 'userMessage', text });
@@ -440,6 +448,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     for (;;) {
     this.budgetHit = false;
     const interim: AgentUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+    let peakInput = 0; // largest single-request input this turn (real token count)
     try {
       const result = await runAgentTurn({
         brain,
@@ -460,6 +469,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
               outputTokens: e.usage?.outputTokens,
             });
             if (e.usage) {
+              peakInput = Math.max(peakInput, e.usage.inputTokens ?? 0);
               interim.inputTokens += e.usage.inputTokens ?? 0;
               interim.outputTokens += e.usage.outputTokens ?? 0;
               interim.totalTokens += e.usage.totalTokens ?? ((e.usage.inputTokens ?? 0) + (e.usage.outputTokens ?? 0));
@@ -485,6 +495,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
       this.current.items = result.items;
       this.current.model = cfg.model;
+      this.current.lastPeakInput = peakInput;
       const turnCost = await this.applyUsage(cfg.model, result.usage);
       void this.audit.append('turn', this.current.id, {
         mode,
@@ -528,7 +539,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       // Self-heal: on a context or rate stream failure, auto-compact once and retry rather than stop.
       if (!healed && isRecoverableStreamError(e) && this.current.items.length >= 4) {
         healed = true;
-        void this.audit.append('auto_heal', this.current.id, { reason: (e as Error).message.slice(0, 200) });
+        // Learn the deployment's real ceiling from this failure: compact below the size that
+        // overflowed on future turns so we stop hitting it.
+        const failedSize = peakInput || estimateTokens(this.current.items);
+        this.current.compactAtTokens = Math.max(20000, Math.min(this.current.compactAtTokens ?? Infinity, Math.floor(failedSize * 0.7)));
+        void this.audit.append('auto_heal', this.current.id, { reason: (e as Error).message.slice(0, 200), failedSize, newCap: this.current.compactAtTokens });
         this.post({ type: 'healReset' });
         this.post({ type: 'status', text: 'Context or rate limit hit - auto-compacting and retrying...' });
         try {
@@ -606,6 +621,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
       const summary = res.outputText || '(summary unavailable)';
       this.current.items = [{ role: 'assistant', content: `[Earlier conversation compacted]\n${summary}` }];
+      this.current.lastPeakInput = 0; // the summarized context is small; drop the stale high-water mark
       await this.saveCurrent();
       this.post({ type: 'compacted', summary });
       this.postTotals();
