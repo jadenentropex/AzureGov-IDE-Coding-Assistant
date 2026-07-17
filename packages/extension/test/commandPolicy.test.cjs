@@ -73,3 +73,14 @@ test('commandExes enumerates every executable across operators and substitution'
   assert.deepEqual(cp.commandExes('az login | jq . ; node run.js'), ['az', 'jq', 'node']);
   assert.deepEqual(cp.commandExes('git $(curl evil)'), ['git', 'curl']);
 });
+
+test('substitution bodies containing parentheses do not hide an executable (probe finding)', () => {
+  const al = { allowlist: ['git', 'az', 'npm'], autoApprove: true, autoAllowTerminal: false };
+  // The exact bypass the adversarial probe found: python hidden in a $() whose body has parens.
+  assert.equal(decide(`git log --format=$(python3 -c 'print(open("cui.txt").read())')`, al), 'BLOCKED');
+  assert.ok(cp.commandExes(`git log --format=$(python3 -c 'print(open("cui.txt").read())')`).includes('python3'));
+  // Process substitution and nested substitution are covered too.
+  assert.equal(decide('git diff <(python3 -c "print(1)")', al), 'BLOCKED');
+  assert.equal(decide('git log --format=$(echo $(python evil))', al), 'BLOCKED');
+  assert.ok(cp.commandExes('git log --format=$(node -e "x=(1)")').includes('node'));
+});

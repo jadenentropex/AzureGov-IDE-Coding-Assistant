@@ -43,18 +43,53 @@ export function firstExe(command: string): string {
 }
 
 /**
+ * Command-substitution bodies inside a string: `$(...)`, `<(...)`, `>(...)` scanned with balanced
+ * parentheses (so a body containing parens, e.g. `python -c 'print(...)'`, is captured whole), plus
+ * backtick substitutions. A regex cannot match balanced parens, so this scans manually.
+ */
+function substitutionBodies(s: string): string[] {
+  const bodies: string[] = [];
+  for (let i = 0; i < s.length - 1; i++) {
+    if ((s[i] === '$' || s[i] === '<' || s[i] === '>') && s[i + 1] === '(') {
+      let depth = 1;
+      let j = i + 2;
+      for (; j < s.length && depth > 0; j++) {
+        if (s[j] === '(') depth++;
+        else if (s[j] === ')') depth--;
+      }
+      bodies.push(s.slice(i + 2, depth === 0 ? j - 1 : s.length));
+      i = j - 1;
+    }
+  }
+  const reBt = /`([^`]*)`/g;
+  let m: RegExpExecArray | null;
+  while ((m = reBt.exec(s)) !== null) bodies.push(m[1] ?? '');
+  return bodies;
+}
+
+/**
  * Split a command line into the segments a shell would run separately, so the allowlist and the
  * Auto-mode gate inspect EVERY executable, not just the first. Covers `&&`, `||`, `;`, `|`, `&`,
- * newlines, and one level of command substitution (`$(...)` and backticks). This is a best-effort
+ * newlines, and recursively descends into command substitution (`$(...)`, `<(...)`, `>(...)`,
+ * backticks) - including substitution bodies that contain parentheses. This is a best-effort
  * tokenizer, not a full shell parser: its job is to make chaining/substitution surface the extra
- * executables to the allowlist rather than hide them behind an approved first token.
+ * executables to the allowlist rather than hide them behind an approved first token, and it
+ * fails closed - anything it cannot resolve still surfaces as a token the allowlist will reject.
  */
 function segments(command: string): string[] {
-  const out = command.split(/&&|\|\||[;&|\n]/);
-  const reSub = /\$\(([^()]*)\)|`([^`]*)`/g;
-  let m: RegExpExecArray | null;
-  while ((m = reSub.exec(command)) !== null) out.push(m[1] ?? m[2] ?? '');
-  return out.map((s) => s.trim()).filter(Boolean);
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const visit = (s: string, depth: number): void => {
+    if (depth > 6 || seen.has(s)) return;
+    seen.add(s);
+    for (const piece of s.split(/&&|\|\||[;&|\n]/)) {
+      const t = piece.trim();
+      if (t) out.push(t);
+    }
+    for (const body of substitutionBodies(s)) visit(body, depth + 1);
+  };
+  visit(command, 0);
+  return out;
 }
 
 /** Every executable invoked by the command line (across chaining and substitution). */

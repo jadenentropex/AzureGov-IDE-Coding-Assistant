@@ -148,8 +148,10 @@ Injection and exfiltration defense:
   exfiltration).
 - Command allowlist (azgovIde.commandAllowlist): if set, run_terminal only runs
   allowlisted executables (for example az, git, terraform, npm, python). Every
-  executable in a chained or substituted command (&&, ;, |, $(...), backticks) must
-  be allowlisted, so a chained second command cannot ride in behind an approved one.
+  executable in a chained or substituted command (&&, ;, |, $(...), <(...), backticks,
+  nested) must be allowlisted, so a second command cannot ride in behind an approved
+  one. Do not allowlist a general shell or launcher (sh, bash, pwsh, env, xargs): it
+  can run anything and defeats the allowlist.
 - Egress guard (azgovIde.blockNetworkCommands): blocks ad-hoc network tools (curl,
   wget, scp, ssh, nc, and similar) so CUI cannot leave the boundary. Package managers
   and Azure CLI are unaffected.
