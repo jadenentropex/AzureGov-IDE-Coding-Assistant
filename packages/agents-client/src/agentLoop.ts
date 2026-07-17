@@ -9,13 +9,15 @@ export interface AgentUsage {
 }
 
 export interface AgentEvent {
-  type: 'text_delta' | 'thinking_delta' | 'tool_call' | 'tool_result' | 'final' | 'usage' | 'step';
+  type: 'text_delta' | 'thinking_delta' | 'tool_call' | 'tool_result' | 'final' | 'usage' | 'step' | 'model_call';
   text?: string;
   tool?: string;
   args?: string;
   result?: string;
   usage?: AgentUsage;
   step?: number;
+  /** Azure OpenAI response id, emitted on 'model_call' for audit. */
+  responseId?: string;
 }
 
 export interface RunAgentOptions {
@@ -89,6 +91,13 @@ export async function runAgentTurn(opts: RunAgentOptions): Promise<AgentResult> 
       inputTokens += res.usage.input_tokens ?? 0;
       outputTokens += res.usage.output_tokens ?? 0;
     }
+    opts.onEvent?.({
+      type: 'model_call',
+      responseId: res.responseId,
+      usage: res.usage
+        ? { inputTokens: res.usage.input_tokens, outputTokens: res.usage.output_tokens, totalTokens: res.usage.total_tokens }
+        : undefined,
+    });
 
     for (const fc of res.functionCalls) items.push(fc);
 

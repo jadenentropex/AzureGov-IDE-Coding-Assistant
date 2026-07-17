@@ -12,6 +12,7 @@ import { readConfig, assertBoundary } from './config';
 import { getTokenProvider } from './auth';
 import { createTools, type ChangePreview, type ChangeResult } from './tools';
 import { computeCost } from './pricing';
+import { AuditLog, decodeTokenIdentity } from './audit';
 
 const READONLY_TOOL_NAMES = new Set(['list_dir', 'read_file', 'grep']);
 
@@ -75,10 +76,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private abort?: AbortController;
   private approvals = new Map<string, (approved: boolean) => void>();
   private queue: { text: string; mode: Mode }[] = [];
+  private actorResolved = false;
+  private startedSessions = new Set<string>();
 
   /** Post an inline change/approval card; resolve when the user decides (or auto). */
   private requestChange = (preview: ChangePreview, needsApproval: boolean): Promise<{ approved: boolean; id: string }> => {
     const id = `chg-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+    void this.audit.append('change_request', this.current.id, {
+      changeId: id,
+      kind: preview.kind,
+      path: preview.path,
+      command: preview.command,
+      added: preview.added,
+      removed: preview.removed,
+      beforeSha: preview.beforeSha,
+      afterSha: preview.afterSha,
+      needsApproval,
+    });
     if (!needsApproval) {
       this.post({ type: 'change', id, preview });
       return Promise.resolve({ approved: true, id });
@@ -88,6 +102,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   };
 
   private changeDone = (id: string, result: ChangeResult): void => {
+    void this.audit.append('change_result', this.current.id, {
+      changeId: id,
+      ok: result.ok,
+      rejected: result.rejected,
+      error: result.error,
+      exitCode: result.exitCode,
+    });
     this.post({ type: 'changeResult', id, result });
   };
 
@@ -99,6 +120,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   constructor(
     private readonly ctx: vscode.ExtensionContext,
     private readonly output: vscode.OutputChannel,
+    private readonly audit: AuditLog,
   ) {
     this.ctx.subscriptions.push(
       vscode.workspace.onDidChangeConfiguration((e) => {
@@ -159,7 +181,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const resolve = this.approvals.get(m.id ?? '');
         if (resolve) {
           this.approvals.delete(m.id ?? '');
-          resolve(!!(m as { approved?: boolean }).approved);
+          const approved = !!(m as { approved?: boolean }).approved;
+          void this.audit.append('approval', this.current.id, { changeId: m.id, approved });
+          resolve(approved);
         }
         break;
       }
@@ -167,6 +191,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.abort?.abort();
         this.clearApprovals();
         this.queue = [];
+        if (this.current.messages.length) {
+          void this.audit.append('session_end', this.current.id, {
+            messages: this.current.messages.length,
+            costUsd: this.current.costUsd,
+            tokens: this.current.inTok + this.current.outTok,
+          });
+        }
         await this.saveCurrent();
         this.current = this.freshSession();
         this.post({ type: 'cleared' });
@@ -229,6 +260,27 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.running = true;
     this.abort = new AbortController();
 
+    // Resolve the acting identity for attribution (once), then log session start.
+    if (!this.actorResolved) {
+      try {
+        if (auth.kind === 'bearer') this.audit.setActor(decodeTokenIdentity(await auth.getToken()));
+        else this.audit.setActor({ source: 'api-key' });
+      } catch {
+        this.audit.setActor({ source: cfg.authMode });
+      }
+      this.actorResolved = true;
+    }
+    if (!this.startedSessions.has(this.current.id)) {
+      this.startedSessions.add(this.current.id);
+      void this.audit.append('session_start', this.current.id, {
+        model: cfg.model,
+        endpoint: cfg.endpoint,
+        mode,
+        store: cfg.store,
+        authMode: cfg.authMode,
+      });
+    }
+
     // Auto-compact before the turn if the context has grown large.
     const threshold = vscode.workspace.getConfiguration('azgovIde').get<number>('autoCompactTokens', 100000);
     if (threshold > 0 && estimateTokens(this.current.items) > threshold) {
@@ -269,17 +321,35 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         onEvent: (e) => {
           if (e.type === 'text_delta') this.post({ type: 'delta', text: e.text });
           else if (e.type === 'thinking_delta') this.post({ type: 'thinking', text: e.text });
-          else if (e.type === 'tool_call') {
+          else if (e.type === 'model_call') {
+            void this.audit.append('model_call', this.current.id, {
+              responseId: e.responseId,
+              inputTokens: e.usage?.inputTokens,
+              outputTokens: e.usage?.outputTokens,
+            });
+          } else if (e.type === 'tool_call') {
             // Mutating tools render as rich change/approval cards (via requestChange); only show a
             // plain line for read-only tools here.
             if (READONLY_TOOL_NAMES.has(e.tool ?? '')) this.post({ type: 'tool', tool: e.tool, args: e.args });
-          } else if (e.type === 'tool_result') this.output.appendLine(`  <- ${e.tool}: ${(e.result ?? '').slice(0, 200)}`);
+            void this.audit.append('tool_call', this.current.id, { tool: e.tool, args: (e.args ?? '').slice(0, 500) });
+          } else if (e.type === 'tool_result') {
+            this.output.appendLine(`  <- ${e.tool}: ${(e.result ?? '').slice(0, 200)}`);
+            void this.audit.append('tool_result', this.current.id, { tool: e.tool, result: (e.result ?? '').slice(0, 500) });
+          }
         },
       });
 
       this.current.items = result.items;
       this.current.model = cfg.model;
       const turnCost = await this.applyUsage(cfg.model, result.usage);
+      void this.audit.append('turn', this.current.id, {
+        mode,
+        model: cfg.model,
+        inputTokens: result.usage.inputTokens,
+        outputTokens: result.usage.outputTokens,
+        costUsd: turnCost,
+        steps: result.steps,
+      });
       this.current.messages.push({ role: 'assistant', text: result.finalText });
       await this.saveCurrent();
 
@@ -292,9 +362,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this.post({ type: 'done' });
     } catch (e) {
       if (this.abort?.signal.aborted) {
+        void this.audit.append('cancelled', this.current.id, {});
         this.post({ type: 'status', text: 'Stopped.' });
         this.post({ type: 'done' });
       } else {
+        void this.audit.append('error', this.current.id, { message: (e as Error).message });
         this.post({ type: 'error', message: (e as Error).message });
         this.output.appendLine(`ERROR: ${(e as Error).stack ?? (e as Error).message}`);
       }

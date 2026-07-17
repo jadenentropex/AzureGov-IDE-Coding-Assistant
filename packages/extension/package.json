@@ -2,7 +2,7 @@
   "name": "azuregov-ide-coding-assistant",
   "displayName": "AzureGov IDE Coding Assistant",
   "description": "Azure-native AI coding agent for CMMC/CUI - Azure OpenAI Responses API in Azure US Government. Code context never leaves the Gov boundary.",
-  "version": "0.0.12",
+  "version": "0.0.13",
   "publisher": "azgov-ide",
   "private": true,
   "license": "Apache-2.0",
@@ -92,6 +92,13 @@
           "policy": { "name": "AzgovIdeApproveWrites", "minimumVersion": "1.90.0" },
           "description": "Require confirmation before file writes and terminal commands (ignored in Auto mode). Org admins can lock this via policy."
         },
+        "azgovIde.auditEnabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "application",
+          "policy": { "name": "AzgovIdeAuditEnabled", "minimumVersion": "1.90.0" },
+          "markdownDescription": "Write a tamper-evident, hash-chained audit log of every agent action (model calls, tool calls, file changes, approvals) with the resolved identity. Required for CMMC AU controls. Org admins can lock this on via policy."
+        },
         "azgovIde.autoCompactTokens": {
           "type": "number",
           "default": 100000,
@@ -129,7 +136,9 @@
       { "command": "azgovIde.ask", "title": "AzureGov IDE: Ask..." },
       { "command": "azgovIde.selectModel", "title": "AzureGov IDE: Select model" },
       { "command": "azgovIde.setApiKey", "title": "AzureGov IDE: Set break-glass API key" },
-      { "command": "azgovIde.clearApiKey", "title": "AzureGov IDE: Clear break-glass API key" }
+      { "command": "azgovIde.clearApiKey", "title": "AzureGov IDE: Clear break-glass API key" },
+      { "command": "azgovIde.verifyAudit", "title": "AzureGov IDE: Verify audit log integrity" },
+      { "command": "azgovIde.openAudit", "title": "AzureGov IDE: Open audit log" }
     ]
   },
   "scripts": {

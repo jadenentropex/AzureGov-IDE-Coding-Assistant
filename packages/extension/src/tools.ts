@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { exec, spawn, type ChildProcess } from 'node:child_process';
 import type { Tool } from '@azgov-ide/agents-client';
+import { sha256 } from './audit';
 
 export interface ChangePreview {
   kind: 'create' | 'edit' | 'folder' | 'command';
@@ -11,6 +12,8 @@ export interface ChangePreview {
   removed?: number;
   diff?: string;
   command?: string;
+  beforeSha?: string;
+  afterSha?: string;
 }
 
 export interface ChangeResult {
@@ -261,7 +264,15 @@ export function createTools(deps: ToolDeps): Tool[] {
         const existed = await fs.access(file).then(() => true).catch(() => false);
         const oldContent = existed ? await fs.readFile(file, 'utf8').catch(() => '') : '';
         const { added, removed, hunk } = lineDiff(oldContent, content);
-        const preview: ChangePreview = { kind: existed ? 'edit' : 'create', path: rel, added, removed, diff: hunk };
+        const preview: ChangePreview = {
+          kind: existed ? 'edit' : 'create',
+          path: rel,
+          added,
+          removed,
+          diff: hunk,
+          beforeSha: existed ? sha256(oldContent) : undefined,
+          afterSha: sha256(content),
+        };
         return guarded(preview, async () => {
           await fs.mkdir(path.dirname(file), { recursive: true });
           await fs.writeFile(file, content, 'utf8');
