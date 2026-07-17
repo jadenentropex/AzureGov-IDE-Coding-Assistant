@@ -64,6 +64,8 @@ Open the Command Palette and type AzureGov:
 | AzureGov IDE: Select model | azgovIde.selectModel | Switch the active model (gpt-4.1 / gpt-5.1). |
 | AzureGov IDE: Set break-glass API key | azgovIde.setApiKey | Store the API key in SecretStorage. |
 | AzureGov IDE: Clear break-glass API key | azgovIde.clearApiKey | Remove the stored key and cached token. |
+| AzureGov IDE: Verify audit log integrity | azgovIde.verifyAudit | Re-check the hash chain of the local audit log. |
+| AzureGov IDE: Open audit log | azgovIde.openAudit | Open the local audit log (JSONL). |
 
 ## Settings
 
@@ -77,6 +79,33 @@ Open the Command Palette and type AzureGov:
 | azgovIde.approveWrites | true | Require confirmation before writes and commands (ignored in Auto mode). |
 | azgovIde.autoCompactTokens | 100000 | Auto-compact the conversation past this size. 0 disables. Or type /compact. |
 | azgovIde.pricing | {} | Per-model USD per 1,000,000 tokens, to estimate spend. |
+| azgovIde.auditEnabled | true | Write the tamper-evident, hash-chained audit log. |
+| azgovIde.auditIngestionEndpoint | "" | Logs Ingestion endpoint of a Data Collection Endpoint (Gov: *.ingest.monitor.azure.us). Set to forward off-box. |
+| azgovIde.auditDcrImmutableId | "" | Immutable id of the Data Collection Rule that routes events to the workspace. |
+| azgovIde.auditStreamName | Custom-AzgovIdeAudit_CL | Stream name declared in the DCR (matches the AzgovIdeAudit_CL table). |
+
+## Audit and evidence
+
+Because store=false means Azure keeps no conversation state, the client is the only
+possible audit source, so the audit log is the load-bearing NIST SP 800-171 AU control
+(3.3.1 / 3.3.2 / 3.3.8).
+
+Every agent action (model calls, tool calls, file changes with before/after SHA-256,
+approvals, per-turn cost/tokens, errors) is written to an append-only JSONL log under the
+extension global storage. Each event is hash-chained to the previous one, so any edit,
+insertion, or deletion is detectable. Run "AzureGov IDE: Verify audit log integrity" to
+re-check the chain. Each event is attributed to the resolved Entra identity (managed
+identity object id, or the signed-in user) so actions trace to an individual.
+
+Optional off-box forwarding: set auditIngestionEndpoint and auditDcrImmutableId to send a
+second, independent copy of every event to a Log Analytics workspace via the Azure Monitor
+Logs Ingestion API. This keeps the trail even if the workstation is compromised (3.3.8,
+protect audit information). Forwarding is best-effort and never blocks the agent; the full
+hash-chained event is carried in the RawEvent column so the off-box copy stays verifiable.
+The signing identity needs the "Monitoring Metrics Publisher" role on the Data Collection
+Rule. In Azure US Government the Monitor scope is https://monitor.azure.us. Provision the
+Data Collection Endpoint, custom table (AzgovIdeAudit_CL), and Data Collection Rule with
+your workspace, then set the three settings above (org admins can lock them via policy).
 
 ## Tools and safety
 

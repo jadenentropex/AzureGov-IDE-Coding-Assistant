@@ -2,7 +2,7 @@
   "name": "azuregov-ide-coding-assistant",
   "displayName": "AzureGov IDE Coding Assistant",
   "description": "Azure-native AI coding agent for CMMC/CUI - Azure OpenAI Responses API in Azure US Government. Code context never leaves the Gov boundary.",
-  "version": "0.0.13",
+  "version": "0.0.14",
   "publisher": "azgov-ide",
   "private": true,
   "license": "Apache-2.0",
@@ -98,6 +98,26 @@
           "scope": "application",
           "policy": { "name": "AzgovIdeAuditEnabled", "minimumVersion": "1.90.0" },
           "markdownDescription": "Write a tamper-evident, hash-chained audit log of every agent action (model calls, tool calls, file changes, approvals) with the resolved identity. Required for CMMC AU controls. Org admins can lock this on via policy."
+        },
+        "azgovIde.auditIngestionEndpoint": {
+          "type": "string",
+          "default": "",
+          "scope": "application",
+          "policy": { "name": "AzgovIdeAuditIngestionEndpoint", "minimumVersion": "1.90.0" },
+          "markdownDescription": "Azure Monitor **Logs Ingestion** endpoint of a Data Collection Endpoint (Gov: `https://<dce>.<region>.ingest.monitor.azure.us`). When set with `auditDcrImmutableId`, the audit log is forwarded off-box to Log Analytics for an independent, tamper-evident copy. Leave empty for local-only. Org admins can lock this via policy."
+        },
+        "azgovIde.auditDcrImmutableId": {
+          "type": "string",
+          "default": "",
+          "scope": "application",
+          "policy": { "name": "AzgovIdeAuditDcrImmutableId", "minimumVersion": "1.90.0" },
+          "markdownDescription": "Immutable ID of the Data Collection Rule that routes audit events to the workspace (for example `dcr-xxxxxxxx...`). Required for off-box forwarding. Org admins can lock this via policy."
+        },
+        "azgovIde.auditStreamName": {
+          "type": "string",
+          "default": "Custom-AzgovIdeAudit_CL",
+          "scope": "application",
+          "markdownDescription": "Custom stream name declared in the Data Collection Rule (matches the `AzgovIdeAudit_CL` table). Change only if your DCR uses a different stream name."
         },
         "azgovIde.autoCompactTokens": {
           "type": "number",

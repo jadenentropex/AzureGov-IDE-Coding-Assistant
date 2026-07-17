@@ -12,30 +12,83 @@ const GOV_SCOPE = 'https://cognitiveservices.azure.us/.default offline_access';
 const AZ_CLI_CLIENT_ID = '04b07795-8ddb-461a-bbee-02f9e1bf7b46';
 /** Data-plane audience for the VM's managed-identity token (IMDS). */
 const GOV_MI_RESOURCE = 'https://cognitiveservices.azure.us';
+/** Azure Monitor audience (Gov) for the Logs Ingestion API. */
+const GOV_MONITOR_RESOURCE = 'https://monitor.azure.us';
 
-let miCache: { token: string; exp: number } | undefined;
+const miCache = new Map<string, { token: string; exp: number }>();
 
 /**
- * Get a token from the Azure VM's system-assigned **managed identity** via the local
- * Instance Metadata Service (169.254.169.254). No browser, no CDN, no external egress,
- * no interactive sign-in — authentication happens entirely inside the VM. The VM's
- * identity must hold the "Cognitive Services OpenAI User" role on the resource.
+ * Get a managed-identity token for a given resource audience via the local Instance
+ * Metadata Service (169.254.169.254). No browser, no CDN, no external egress, no
+ * interactive sign-in — authentication happens entirely inside the VM.
  */
-async function getManagedIdentityToken(): Promise<string> {
-  if (miCache && miCache.exp - 60_000 > Date.now()) return miCache.token;
+async function imdsToken(resource: string): Promise<string> {
+  const hit = miCache.get(resource);
+  if (hit && hit.exp - 60_000 > Date.now()) return hit.token;
   const url =
     'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=' +
-    encodeURIComponent(GOV_MI_RESOURCE);
+    encodeURIComponent(resource);
   const res = await fetch(url, { headers: { Metadata: 'true' } });
   if (!res.ok) {
     throw new Error(
       `Managed identity token failed (${res.status}): ${(await res.text()).slice(0, 300)}. ` +
-        'Ensure the VM has a system-assigned identity with the "Cognitive Services OpenAI User" role.',
+        `Ensure the VM has a system-assigned identity with a role on ${resource}.`,
     );
   }
   const t = (await res.json()) as { access_token: string; expires_on?: string };
-  miCache = { token: t.access_token, exp: t.expires_on ? Number(t.expires_on) * 1000 : Date.now() + 3_600_000 };
+  miCache.set(resource, {
+    token: t.access_token,
+    exp: t.expires_on ? Number(t.expires_on) * 1000 : Date.now() + 3_600_000,
+  });
   return t.access_token;
+}
+
+/**
+ * Get a token from the Azure VM's system-assigned **managed identity** for the Azure
+ * OpenAI data plane. The VM's identity must hold the "Cognitive Services OpenAI User" role.
+ */
+async function getManagedIdentityToken(): Promise<string> {
+  return imdsToken(GOV_MI_RESOURCE);
+}
+
+/**
+ * Best-effort token for the Azure Monitor Logs Ingestion API (Gov), used to forward the
+ * audit log to Log Analytics. Never triggers an interactive sign-in on its own: forwarding
+ * is a background side channel and must not interrupt the user.
+ * - `managed` — IMDS token for the monitor audience (the in-boundary PAW path).
+ * - `entra`   — silently exchange a cached refresh token for the monitor scope; undefined
+ *               if the user has not signed in yet.
+ * - `key`     — undefined (an API key cannot call the ingestion API; log stays local-only).
+ * The identity must hold "Monitoring Metrics Publisher" on the Data Collection Rule.
+ */
+export async function getMonitorToken(
+  ctx: vscode.ExtensionContext,
+  cfg: { authMode: 'entra' | 'key' | 'managed'; tenantId: string },
+): Promise<string | undefined> {
+  try {
+    if (cfg.authMode === 'managed') return await imdsToken(GOV_MONITOR_RESOURCE);
+    if (cfg.authMode === 'entra') {
+      const raw = await ctx.secrets.get(TOKEN_SECRET);
+      const cached = raw ? (JSON.parse(raw) as TokenCache) : undefined;
+      if (!cached?.refresh_token) return undefined;
+      const res = await fetch(`${GOV_AUTHORITY}/${cfg.tenantId || 'organizations'}/oauth2/v2.0/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'refresh_token',
+          client_id: AZ_CLI_CLIENT_ID,
+          refresh_token: cached.refresh_token,
+          scope: `${GOV_MONITOR_RESOURCE}/.default`,
+        }),
+      });
+      if (!res.ok) return undefined;
+      const t = (await res.json()) as { access_token: string };
+      return t.access_token;
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 interface TokenCache {

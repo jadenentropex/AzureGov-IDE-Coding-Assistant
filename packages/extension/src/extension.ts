@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { registerChatParticipant } from './chatParticipant';
 import { ChatViewProvider } from './chatView';
 import { runAsk } from './ask';
-import { setApiKey, clearApiKey } from './auth';
+import { setApiKey, clearApiKey, getMonitorToken } from './auth';
 import { AuditLog, verifyAuditChain } from './audit';
 
 let statusBar: vscode.StatusBarItem;
@@ -13,8 +13,16 @@ export function activate(ctx: vscode.ExtensionContext): void {
 
   registerChatParticipant(ctx, output);
 
-  // Tamper-evident audit log (the sole audit source under store=false).
-  const audit = new AuditLog(ctx, output);
+  // Tamper-evident audit log (the sole audit source under store=false), with best-effort
+  // off-box forwarding to Log Analytics via the Monitor Logs Ingestion API.
+  const audit = new AuditLog(ctx, output, () => {
+    const c = vscode.workspace.getConfiguration('azgovIde');
+    return getMonitorToken(ctx, {
+      authMode: c.get<'managed' | 'entra' | 'key'>('authMode', 'managed'),
+      tenantId: c.get<string>('tenantId', ''),
+    });
+  });
+  ctx.subscriptions.push({ dispose: () => audit.dispose() });
 
   // The dedicated chat panel (activity-bar view): the primary UI.
   const chatProvider = new ChatViewProvider(ctx, output, audit);
