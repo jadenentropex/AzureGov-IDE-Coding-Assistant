@@ -29,11 +29,13 @@ jobs:
       - name: Install
         run: npm ci
 
-      - name: Typecheck
-        run: npm run typecheck
-
+      # Build first: the extension's typecheck resolves @azgov-ide/agents-client from its built
+      # dist/*.d.ts, so agents-client must be compiled before tsc runs on the extension.
       - name: Build
         run: npm run build
+
+      - name: Typecheck
+        run: npm run typecheck
 
       - name: Test
         run: npm test
