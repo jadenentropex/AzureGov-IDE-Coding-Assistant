@@ -340,6 +340,7 @@
         case 'question': closeBubble(); stopThink(); makeQuestionCard(m.id, m.question, m.options || []); break;
         case 'changeResult': finalizeCard(m.id, m.result, m.undoable); if (running) startThink(); break;
         case 'undoResult': finalizeUndo(m.id, m.ok, m.message); break;
+        case 'healReset': { stopThink(); removeStatus(); if (current && current.parentElement) { current.parentElement.remove(); } current = null; thinking = null; break; }
         case 'status': showStatus(m.text || 'Working…'); break;
         case 'compacted': removeStatus(); addCompacted(m.summary || ''); break;
         case 'cost':

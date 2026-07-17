@@ -435,9 +435,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     // Mid-turn cost enforcement: a single turn can make many model calls, so track the running
     // spend and stop the loop the moment the chat's total would cross the budget.
+    let healed = false;
+    try {
+    for (;;) {
     this.budgetHit = false;
     const interim: AgentUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
-
     try {
       const result = await runAgentTurn({
         brain,
@@ -507,6 +509,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.post({ type: 'status', text: `Heads up: this chat has spent ${fmtUsd(this.current.costUsd)} of its ${fmtUsd(cfg.costBudgetUsd)} budget.` });
       }
       this.post({ type: 'done' });
+      break;
     } catch (e) {
       if (this.abort?.signal.aborted) {
         if (this.budgetHit) {
@@ -520,11 +523,28 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           this.post({ type: 'status', text: 'Stopped.' });
         }
         this.post({ type: 'done' });
-      } else {
-        void this.audit.append('error', this.current.id, { message: (e as Error).message });
-        this.post({ type: 'error', message: (e as Error).message });
-        this.output.appendLine(`ERROR: ${(e as Error).stack ?? (e as Error).message}`);
+        break;
       }
+      // Self-heal: on a context or rate stream failure, auto-compact once and retry rather than stop.
+      if (!healed && isRecoverableStreamError(e) && this.current.items.length >= 4) {
+        healed = true;
+        void this.audit.append('auto_heal', this.current.id, { reason: (e as Error).message.slice(0, 200) });
+        this.post({ type: 'healReset' });
+        this.post({ type: 'status', text: 'Context or rate limit hit - auto-compacting and retrying...' });
+        try {
+          await this.compact('auto');
+        } catch {
+          /* if compaction also fails, the next pass surfaces the original error */
+        }
+        this.post({ type: 'assistantStart' });
+        continue;
+      }
+      void this.audit.append('error', this.current.id, { message: (e as Error).message });
+      this.post({ type: 'error', message: (e as Error).message });
+      this.output.appendLine(`ERROR: ${(e as Error).stack ?? (e as Error).message}`);
+      break;
+    }
+    }
     } finally {
       this.running = false;
       this.clearApprovals();
@@ -650,6 +670,28 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const file = path.join(this.ctx.extensionPath, 'media', 'chat.html');
     return readFileSync(file, 'utf8').replace(/{{nonce}}/g, nonce);
   }
+}
+
+/**
+ * Whether a turn failure is the kind that auto-compacting and retrying can recover from - a
+ * context-length overflow or a rate/token limit (the streamed Responses call surfaces these as a
+ * generic stream failure after the adapter has exhausted its transient retries). Auth, boundary,
+ * and workspace errors are deliberately not matched, so they surface immediately.
+ */
+export function isRecoverableStreamError(e: unknown): boolean {
+  const m = ((e as Error)?.message ?? '').toLowerCase();
+  return (
+    m.includes('stream failed') ||
+    m.includes('no error detail') ||
+    m.includes('context length') ||
+    m.includes('context_length') ||
+    m.includes('maximum context') ||
+    m.includes('reduce the length') ||
+    m.includes('too many tokens') ||
+    m.includes('rate limit') ||
+    m.includes('tokens per min') ||
+    m.includes('429')
+  );
 }
 
 /** Rough token estimate (~4 chars/token) for the auto-compact trigger. */
