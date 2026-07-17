@@ -1,7 +1,7 @@
 AzureGov IDE Coding Assistant
 Copyright 2026 Entropex, LLC (https://entropex.io)
 
-This product is developed and maintained by Entropex, LLC — an Azure-native
+This product is developed and maintained by Entropex, LLC - an Azure-native
 CMMC / CUI compliance practice. It is provided free and open-source under the
 Apache License, Version 2.0 (see the LICENSE file).
 
@@ -10,4 +10,4 @@ agent runs against Azure OpenAI in Azure US Government and keeps code context
 inside the customer's authorized Azure boundary.
 
 Commercial implementation, hardening, managed service, custom functionality, and
-CMMC/SSP/assessment support are available from Entropex — https://entropex.io.
+CMMC/SSP/assessment support are available from Entropex - https://entropex.io.

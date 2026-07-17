@@ -1,38 +1,73 @@
-# AzureGov-IDE-Coding-Assistant
+# AzureGov IDE Coding Assistant
 
-An Azure-native, VS Code AI coding assistant for **CMMC Level 2 / CUI** organizations — a Claude-Code-like experience (chat + edit + agent) whose **code context never leaves the customer's Azure US Government boundary**.
+An Azure-native, in-boundary AI coding assistant for CMMC Level 2 / CUI organizations.
+It gives a Claude-Code / Codex style chat, edit, and agent experience while keeping
+code context inside the customer's authorized Azure US Government boundary.
 
-> **Not Claude.** Azure Government has no Anthropic Claude. This is GPT-powered via **Azure OpenAI in Azure Government** (gpt-5.1 / gpt-4.1). The value is the *architecture*: the tool is the compliance surface, not the model.
+Built and maintained by Entropex, LLC (https://entropex.io). Free and open source
+under the Apache License, Version 2.0.
+
+> Not Claude. Azure Government has no Anthropic Claude. The agent is GPT-powered via
+> Azure OpenAI in Azure Government (gpt-5.1 / gpt-4.1). The value is the architecture:
+> the tool is the compliance surface, not the model.
 
 ## Architecture
 
 ```
 VS Code extension (client)                Azure US Government boundary
-  ├─ Chat Participant UI                   ┌───────────────────────────────┐
-  ├─ local tool executors  ───────────────┤ Azure OpenAI Responses API    │
-  │   (read/write/grep/run, in workspace)  │  *.openai.azure.us  gpt-4.1   │
-  ├─ keyless Entra auth (.us audience)     │  store=false → no CUI at rest │
-  └─ agents-client (AgentBrain loop) ──────┤ (Private Endpoint, PE-only)   │
-                                           └───────────────────────────────┘
-   code/tools run locally — only the model call crosses the wire
+  - chat panel (activity-bar view)         +-------------------------------+
+  - local tool executors  ---------------> | Azure OpenAI Responses API    |
+    (read/write/grep/run, in workspace)    |  *.openai.azure.us  gpt-4.1   |
+  - managed-identity / Entra / key auth    |  store=false: no CUI at rest  |
+  - agents-client (agent loop) ----------> | (Private Endpoint, PE-only)   |
+                                           +-------------------------------+
+   code and tools run locally; only the model call crosses the wire
 ```
 
-**Engine = Azure OpenAI Responses API** (verified live in Gov: function-calling + streaming + `store=false`). The classic Assistants API is intentionally **not** used — it retires 2026-08-26. A Microsoft Foundry Agent Service adapter can slot in later behind the same `AgentBrain` interface.
+The engine is the Azure OpenAI Responses API (verified live in Gov: function calling,
+streaming, and store=false). Tools execute locally in the developer workspace, so
+source code stays on the machine and only the model call leaves.
+
+## How it works
+
+- Dedicated chat panel with streaming responses, four modes (Ask, Plan, Auto, Review),
+  a thinking view, and per-message token and cost tracking.
+- Local tools, confined to the workspace root: list_dir, read_file, grep, create_folder,
+  write_file, and run_terminal (with a background flag, a 120s timeout, process-tree
+  kill, and a command denylist).
+- Inline change cards with plus/minus diffs and Approve/Reject buttons (no OS popups).
+  Auto mode applies changes without prompting.
+- Chat history, auto-compaction of long conversations, retry on transient errors, and a
+  message queue so you can add context while a turn runs.
+
+## Authentication (Azure US Government)
+
+- managed: the Azure VM's managed identity via the local metadata endpoint. No sign-in.
+- entra: keyless device-code flow (Gov audience cognitiveservices.azure.us/.default,
+  authority login.microsoftonline.us).
+- key: break-glass API key stored in VS Code SecretStorage.
+
+The identity needs the "Cognitive Services OpenAI User" role on the resource.
 
 ## Compliance posture (NIST SP 800-171 / CMMC L2)
 
-- **3.1.3 CUI flow control** — `store=false` keeps conversation/file state out of Microsoft's managed store; tools execute locally so source stays on the workstation; only the model call crosses the boundary.
-- **3.13.1 boundary protection** — resource is Private-Endpoint-only (`privatelink.openai.azure.us`), public network access disabled.
-- **3.13.x / 3.1.x** — keyless Entra ID (audience `https://cognitiveservices.azure.us/.default`, authority `login.microsoftonline.us`), `disableLocalAuth`, least-privilege `Cognitive Services OpenAI User` role.
-- **3.3.x audit** — diagnostic logs to a Gov Log Analytics workspace; local tool-approval log.
-- Ops prerequisites: Modified Abuse Monitoring approval; confirm the FedRAMP/IL boundary with your Microsoft account team.
+- 3.1.3 CUI flow control: store=false keeps conversation state out of Azure; tools run
+  locally so source stays on the workstation; only the model call crosses the boundary.
+- 3.13.1 boundary protection: the resource is reachable over a Private Endpoint
+  (privatelink.openai.azure.us) with public network access disabled.
+- 3.13.x / 3.1.x: keyless Entra or managed identity, least-privilege roles, FIPS TLS.
+- 3.3.x audit: diagnostic logs to a Gov Log Analytics workspace (in progress).
+
+This repository is a starting point. Standing it up for real CUI requires the backend
+hardening, audit pipeline, and evidence artifacts described in the roadmap. Entropex
+provides implementation and assessment support (see Commercial support below).
 
 ## Repo layout
 
 ```
 packages/
-  agents-client/   # portable agent brain — AgentBrain + ResponsesAdapter + agent loop (zero runtime deps)
-  extension/       # VS Code extension (Chat Participant UI, local tools, auth)
+  agents-client/   portable agent engine (AgentBrain + Responses adapter + loop), no runtime deps
+  extension/       VS Code extension (chat panel, local tools, auth)
 ```
 
 ## Develop
@@ -40,28 +75,26 @@ packages/
 ```bash
 npm install
 npm run build
-# Smoke-test the agent loop against Gov (break-glass key; production uses keyless Entra):
+# Smoke-test the agent loop against Gov (break-glass key; production uses keyless auth):
 AZURE_OPENAI_API_KEY=<key> npm run smoke
 ```
 
-The smoke test drives the real Responses API in Gov through a full `list_dir` → `read_file` → grounded-answer loop against a temp workspace.
-
-### Run the extension
-
-1. `npm install && npm run build`
-2. Press **F5** (or Run → "Run AzureGov IDE Extension") to launch the Extension Development Host.
-3. Open a folder, open the Chat view, and talk to **`@azgov`** (try `@azgov /explain` with a file open).
-4. Auth — pick one:
-   - **Break-glass key (fastest):** set `azgovIde.authMode` = `key`, run **AzureGov IDE: Set break-glass API key**, paste the resource key.
-   - **Keyless Entra (recommended):** set `azgovIde.authMode` = `entra`, set `microsoft-sovereign-cloud.environment` = `AzureUSGovernment`, and assign your identity the **Cognitive Services OpenAI User** role on the resource.
-5. Switch models (gpt-4.1 ↔ gpt-5.1) from the status-bar shield or **AzureGov IDE: Select model**.
-
 ## Status
 
-- [x] Azure OpenAI provisioned + verified in Azure US Government (usgovvirginia)
-- [x] Models deployed & verified: **gpt-4.1** (Standard) + **gpt-5.1** (DataZone) — user-selectable by complexity
-- [x] Responses API agent loop verified live: function-calling + streaming + `store=false`
-- [x] `agents-client` — AgentBrain, ResponsesAdapter, agent loop (builds + smoke-passes against Gov)
-- [x] VS Code extension — Chat Participant `@azgov`, local tools, model picker, key + keyless-Entra auth (builds + activates)
-- [ ] M1: keyless Entra click-test (assign **Cognitive Services OpenAI User**, set `microsoft-sovereign-cloud.environment`)
-- [ ] Backend hardening (PE-only, disableLocalAuth, Log Analytics audit)
+- [x] Azure OpenAI provisioned and verified in Azure US Government
+- [x] Responses API agent loop: function calling, streaming, store=false
+- [x] agents-client engine and VS Code extension (chat panel, modes, cost, diffs, approvals)
+- [ ] Attributable audit log and Log Analytics forwarding
+- [ ] Endpoint pinning and org policy lock
+- [ ] Backend hardening (PE-only, disableLocalAuth, abuse-monitoring exemption)
+- [ ] SSP / evidence bundle generator and the guided install wizard
+
+## Commercial support
+
+Entropex offers implementation, hardening (PE-only, disableLocalAuth, audit pipeline),
+managed service, custom functionality, and CMMC SSP authoring and assessment support.
+See https://entropex.io.
+
+## License
+
+Apache-2.0. See LICENSE and NOTICE.

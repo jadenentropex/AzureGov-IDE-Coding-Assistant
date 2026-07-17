@@ -8,7 +8,7 @@ import {
   type ReasoningOptions,
   type AgentUsage,
 } from '@azgov-ide/agents-client';
-import { readConfig } from './config';
+import { readConfig, assertBoundary } from './config';
 import { getTokenProvider } from './auth';
 import { createTools, type ChangePreview, type ChangeResult } from './tools';
 import { computeCost } from './pricing';
@@ -211,6 +211,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    try {
+      assertBoundary(cfg);
+    } catch (e) {
+      this.post({ type: 'error', message: (e as Error).message });
+      return;
+    }
+
     let auth;
     try {
       auth = await getTokenProvider(this.ctx, cfg);
@@ -313,6 +320,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       return;
     }
     const cfg = readConfig();
+    try {
+      assertBoundary(cfg);
+    } catch (e) {
+      this.post({ type: 'error', message: (e as Error).message });
+      return;
+    }
     let auth;
     try {
       auth = await getTokenProvider(this.ctx, cfg);
@@ -320,7 +333,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this.post({ type: 'error', message: (e as Error).message });
       return;
     }
-    this.post({ type: 'status', text: reason === 'auto' ? 'Context is large — auto-compacting…' : 'Compacting conversation…' });
+    this.post({ type: 'status', text: reason === 'auto' ? 'Context is large - auto-compacting...' : 'Compacting conversation...' });
     const brain = new ResponsesAdapter({ endpoint: cfg.endpoint, deployment: cfg.model, auth, store: cfg.store });
     const transcript = this.current.items.map(itemToText).filter((s) => s).join('\n\n');
     try {

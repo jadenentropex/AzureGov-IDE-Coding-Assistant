@@ -1,8 +1,8 @@
 {
   "name": "azuregov-ide-coding-assistant",
   "displayName": "AzureGov IDE Coding Assistant",
-  "description": "Azure-native AI coding agent for CMMC/CUI — Azure OpenAI Responses API in Azure US Government. Code context never leaves the Gov boundary.",
-  "version": "0.0.11",
+  "description": "Azure-native AI coding agent for CMMC/CUI - Azure OpenAI Responses API in Azure US Government. Code context never leaves the Gov boundary.",
+  "version": "0.0.12",
   "publisher": "azgov-ide",
   "private": true,
   "license": "Apache-2.0",
@@ -46,14 +46,16 @@
         "azgovIde.endpoint": {
           "type": "string",
           "default": "https://aoai-azgov-ide.openai.azure.us",
-          "markdownDescription": "Azure OpenAI **Gov** endpoint (`*.openai.azure.us`)."
+          "scope": "application",
+          "policy": { "name": "AzgovIdeEndpoint", "minimumVersion": "1.90.0" },
+          "markdownDescription": "Azure OpenAI **Gov** endpoint (`*.openai.azure.us`). Org admins can lock this via policy (GPO/Intune)."
         },
         "azgovIde.model": {
           "type": "string",
           "enum": ["gpt-4.1", "gpt-5.1"],
           "enumDescriptions": [
-            "Fast workhorse — everyday edits, explain, quick fixes",
-            "Deep reasoning — complex/multi-file tasks (slower, DataZone)"
+            "Fast workhorse - everyday edits, explain, quick fixes",
+            "Deep reasoning - complex/multi-file tasks (slower, DataZone)"
           ],
           "default": "gpt-4.1",
           "description": "Model deployment. Pick by task complexity (also switchable from the status bar)."
@@ -67,7 +69,9 @@
             "Break-glass API key stored in SecretStorage"
           ],
           "default": "managed",
-          "markdownDescription": "Authentication to the Gov endpoint. `managed` uses the Azure VM's managed identity (no interactive sign-in) — the VM identity must hold the **Cognitive Services OpenAI User** role. `entra` uses the device-code flow. `key` uses a stored API key."
+          "scope": "application",
+          "policy": { "name": "AzgovIdeAuthMode", "minimumVersion": "1.90.0" },
+          "markdownDescription": "Authentication to the Gov endpoint. `managed` uses the Azure VM's managed identity (no interactive sign-in); the VM identity must hold the **Cognitive Services OpenAI User** role. `entra` uses the device-code flow. `key` uses a stored API key. Org admins can lock this via policy."
         },
         "azgovIde.tenantId": {
           "type": "string",
@@ -77,12 +81,16 @@
         "azgovIde.store": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Persist server-side conversation state. **Keep false for CMMC/CUI** — no conversation state at rest in Azure."
+          "scope": "application",
+          "policy": { "name": "AzgovIdeStore", "minimumVersion": "1.90.0" },
+          "markdownDescription": "Persist server-side conversation state. **Keep false for CMMC/CUI**: no conversation state at rest in Azure. Org admins can lock this via policy."
         },
         "azgovIde.approveWrites": {
           "type": "boolean",
           "default": true,
-          "description": "Require confirmation before file writes and terminal commands (ignored in Auto mode)."
+          "scope": "application",
+          "policy": { "name": "AzgovIdeApproveWrites", "minimumVersion": "1.90.0" },
+          "description": "Require confirmation before file writes and terminal commands (ignored in Auto mode). Org admins can lock this via policy."
         },
         "azgovIde.autoCompactTokens": {
           "type": "number",
@@ -100,11 +108,25 @@
               "output": { "type": "number" }
             }
           }
+        },
+        "azgovIde.allowedEndpointHosts": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "scope": "application",
+          "markdownDescription": "Additional approved endpoint hosts besides `*.openai.azure.us` (for example a private hostname). The agent refuses any endpoint whose host is not allowed, so CUI cannot be sent outside the boundary."
+        },
+        "azgovIde.allowedModels": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["gpt-4.1", "gpt-4.1-mini", "gpt-5.1", "o3-mini", "gpt-4o"],
+          "scope": "application",
+          "markdownDescription": "Org-approved model deployment names. The agent refuses models not on this list. An empty list disables the check."
         }
       }
     },
     "commands": [
-      { "command": "azgovIde.ask", "title": "AzureGov IDE: Ask…" },
+      { "command": "azgovIde.ask", "title": "AzureGov IDE: Ask..." },
       { "command": "azgovIde.selectModel", "title": "AzureGov IDE: Select model" },
       { "command": "azgovIde.setApiKey", "title": "AzureGov IDE: Set break-glass API key" },
       { "command": "azgovIde.clearApiKey", "title": "AzureGov IDE: Clear break-glass API key" }
