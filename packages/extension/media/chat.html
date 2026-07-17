@@ -80,6 +80,19 @@
     .chg-actions .approve:hover { background: var(--vscode-button-hoverBackground); }
     .chg-actions .reject { background: transparent; color: var(--vscode-foreground); border: 1px solid var(--vscode-button-border, rgba(128,128,128,.4)); }
 
+    /* Question / route-choice card */
+    .change.question { border-color: var(--vscode-focusBorder, #4aa8ff); }
+    .change.question .q-head { padding: 9px 11px 6px; font-weight: 600; white-space: pre-wrap; }
+    .q-opts { display: flex; flex-direction: column; gap: 6px; padding: 0 10px 8px; }
+    .q-opt { text-align: left; cursor: pointer; border: 1px solid var(--vscode-button-border, rgba(128,128,128,.4)); background: var(--vscode-button-secondaryBackground, transparent); color: var(--vscode-foreground); border-radius: 6px; padding: 7px 10px; font-size: 12px; }
+    .q-opt:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,.15)); border-color: var(--vscode-focusBorder, #4aa8ff); }
+    .q-opt:disabled, .q-other input:disabled, .q-send:disabled { opacity: .5; cursor: default; }
+    .q-other { display: flex; gap: 6px; padding: 0 10px 10px; }
+    .q-other input { flex: 1; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, rgba(128,128,128,.35)); border-radius: 6px; padding: 5px 8px; font-size: 12px; outline: none; }
+    .q-other input:focus { border-color: var(--vscode-focusBorder, #4aa8ff); }
+    .q-send { cursor: pointer; border: none; border-radius: 6px; padding: 5px 12px; font-size: 12px; font-weight: 600; background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+    .q-chosen { padding: 2px 11px 9px; font-size: 11.5px; color: var(--vscode-charts-green, #3fb950); }
+
     #history { position: absolute; inset: 0; background: var(--vscode-sideBar-background, var(--vscode-editor-background)); display: none; flex-direction: column; z-index: 5; }
     #history.show { display: flex; }
     #history .hhead { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--vscode-panel-border, rgba(128,128,128,.25)); }
@@ -255,6 +268,39 @@
       scrollDown();
     }
 
+    function makeQuestionCard(id, question, options) {
+      hideEmpty(); removeStatus(); stopThink();
+      var card = document.createElement('div'); card.className = 'change question'; card.dataset.id = id;
+      var head = document.createElement('div'); head.className = 'q-head'; head.textContent = question || 'Choose an option:';
+      card.appendChild(head);
+      var opts = document.createElement('div'); opts.className = 'q-opts';
+      (options || []).forEach(function (opt) {
+        var b = document.createElement('button'); b.className = 'q-opt'; b.textContent = opt;
+        b.addEventListener('click', function () { answerQuestion(id, opt); });
+        opts.appendChild(b);
+      });
+      card.appendChild(opts);
+      var other = document.createElement('div'); other.className = 'q-other';
+      var inp = document.createElement('input'); inp.type = 'text'; inp.placeholder = 'Other... type your own answer';
+      var send = document.createElement('button'); send.className = 'q-send'; send.textContent = 'Send';
+      var submitOther = function () { var v = inp.value.trim(); if (v) answerQuestion(id, v); };
+      send.addEventListener('click', submitOther);
+      inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); submitOther(); } });
+      other.appendChild(inp); other.appendChild(send);
+      card.appendChild(other);
+      messages.appendChild(card); cards[id] = card; scrollDown();
+      try { inp.focus(); } catch (e) {}
+    }
+    function answerQuestion(id, answer) {
+      var card = cards[id];
+      if (card) {
+        card.querySelectorAll('button, input').forEach(function (el) { el.disabled = true; });
+        var chosen = document.createElement('div'); chosen.className = 'q-chosen'; chosen.textContent = 'You chose: ' + answer; card.appendChild(chosen);
+      }
+      vscode.postMessage({ type: 'questionResponse', id: id, answer: answer });
+      if (running) startThink();
+    }
+
     function setRunning(r) { running = r; stopBtn.style.display = r ? '' : 'none'; }
     function submit() { const text = input.value.trim(); if (!text) return; input.value = ''; input.style.height = 'auto'; vscode.postMessage({ type: 'ask', text, mode: modeSel.value }); }
     function addQueued(text) { const c = document.createElement('div'); c.className = 'qchip'; c.textContent = '⏳ ' + text; document.getElementById('queued').appendChild(c); }
@@ -291,6 +337,7 @@
         case 'tool': closeBubble(); addTool(m.tool + '(' + (m.args || '').slice(0, 70) + ')'); if (running) startThink(); break;
         case 'change': closeBubble(); makeChangeCard(m.id, m.preview, false); break;
         case 'approvalRequest': closeBubble(); stopThink(); makeChangeCard(m.id, m.preview, true); break;
+        case 'question': closeBubble(); stopThink(); makeQuestionCard(m.id, m.question, m.options || []); break;
         case 'changeResult': finalizeCard(m.id, m.result, m.undoable); if (running) startThink(); break;
         case 'undoResult': finalizeUndo(m.id, m.ok, m.message); break;
         case 'status': showStatus(m.text || 'Working…'); break;

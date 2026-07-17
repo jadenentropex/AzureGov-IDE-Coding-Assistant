@@ -43,9 +43,11 @@ export interface ToolDeps {
   requestChange?: (preview: ChangePreview, needsApproval: boolean) => Promise<{ approved: boolean; id: string }>;
   /** Finalize a change card (applied / rejected / error / command output). */
   changeDone?: (id: string, result: ChangeResult) => void;
+  /** Ask the user to pick between options (with an Other free-text choice); resolves with their answer. */
+  askQuestion?: (q: { question: string; options: string[] }) => Promise<string>;
 }
 
-const READONLY_TOOLS = new Set(['list_dir', 'read_file', 'grep']);
+const READONLY_TOOLS = new Set(['list_dir', 'read_file', 'grep', 'ask_options']);
 
 function confine(root: string, p: string): string {
   const resolved = path.resolve(root, p);
@@ -175,6 +177,34 @@ export function createTools(deps: ToolDeps): Tool[] {
   };
 
   const all: Tool[] = [
+    {
+      name: 'ask_options',
+      description:
+        'Ask the user to choose between approaches when there are multiple viable routes, or when you are blocked on a decision that is genuinely the user\'s to make (not one you can resolve from the code or sensible defaults). ' +
+        'Provide a clear question and 2-4 concise, mutually-exclusive options. The user can also answer with their own text via an "Other" box. Returns the user\'s choice. ' +
+        'Do not use this for trivial choices you should just make yourself, or to ask permission for an action (writes and commands already have their own approval).',
+      parameters: {
+        type: 'object',
+        properties: {
+          question: { type: 'string', description: 'The question to ask the user.' },
+          options: {
+            type: 'array',
+            items: { type: 'string' },
+            description: '2 to 4 short, distinct option labels for the user to pick from.',
+          },
+        },
+        required: ['question', 'options'],
+        additionalProperties: false,
+      },
+      async run(args) {
+        const question = String(args['question'] ?? '').trim();
+        const options = Array.isArray(args['options']) ? (args['options'] as unknown[]).map((o) => String(o)).filter((s) => s.trim()).slice(0, 6) : [];
+        if (!question) return 'ERROR: question is required.';
+        if (!deps.askQuestion) return 'No interactive UI is available to ask the user; proceed with your best judgment and state your assumption.';
+        const answer = (await deps.askQuestion({ question, options })).trim();
+        return answer ? `The user chose: ${answer}` : 'The user dismissed the question without choosing. Proceed with your best judgment or ask again if truly blocked.';
+      },
+    },
     {
       name: 'list_dir',
       description: 'List files and folders in a workspace directory. Use "." for the workspace root.',

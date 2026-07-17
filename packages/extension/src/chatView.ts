@@ -23,7 +23,10 @@ const BASE_SYSTEM =
   'Terraform/Bicep for IaC, and opening tunnels (e.g. `az network bastion tunnel`) when the user directs. ' +
   'For dev servers, tunnels, or any long-lived process, call run_terminal with background:true so it starts ' +
   'detached and does NOT block — never run a server in the foreground. ' +
-  'Inspect before changing; prefer minimal, focused edits; explain what you did; be concise.';
+  'Inspect before changing; prefer minimal, focused edits; explain what you did; be concise. ' +
+  'When there are multiple viable approaches, or you are blocked on a decision that is genuinely the ' +
+  "user's to make (not one you can resolve from the code or sensible defaults), call the ask_options " +
+  'tool to let them choose a route - they can also answer with their own text via "Other".';
 
 type Mode = 'ask' | 'plan' | 'auto' | 'review';
 const REASONING_MODELS = new Set(['gpt-5.1', 'o3-mini']);
@@ -76,6 +79,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private running = false;
   private abort?: AbortController;
   private approvals = new Map<string, (approved: boolean) => void>();
+  private questions = new Map<string, (answer: string) => void>();
   private queue: { text: string; mode: Mode }[] = [];
   private actorResolved = false;
   private startedSessions = new Set<string>();
@@ -176,6 +180,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.approvals.clear();
   }
 
+  /** Present a multiple-choice question (with an Other free-text option); resolve with the answer. */
+  private askQuestion = (q: { question: string; options: string[] }): Promise<string> => {
+    const id = `q-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+    void this.audit.append('question_asked', this.current.id, { question: q.question, options: (q.options ?? []).join(' | ') });
+    this.post({ type: 'question', id, question: q.question, options: q.options ?? [] });
+    return new Promise((resolve) => this.questions.set(id, resolve));
+  };
+
+  private clearQuestions(): void {
+    this.questions.forEach((resolve) => resolve(''));
+    this.questions.clear();
+  }
+
   constructor(
     private readonly ctx: vscode.ExtensionContext,
     private readonly output: vscode.OutputChannel,
@@ -233,6 +250,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case 'cancel':
         this.abort?.abort();
         this.clearApprovals();
+        this.clearQuestions();
         this.queue = [];
         this.post({ type: 'queueCleared' });
         break;
@@ -246,9 +264,20 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
         break;
       }
+      case 'questionResponse': {
+        const resolve = this.questions.get(m.id ?? '');
+        if (resolve) {
+          this.questions.delete(m.id ?? '');
+          const answer = String((m as { answer?: string }).answer ?? '');
+          void this.audit.append('question_answered', this.current.id, { answer });
+          resolve(answer);
+        }
+        break;
+      }
       case 'newChat':
         this.abort?.abort();
         this.clearApprovals();
+        this.clearQuestions();
         this.queue = [];
         if (this.current.messages.length) {
           void this.audit.append('session_end', this.current.id, {
@@ -398,6 +427,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       log: (msg) => this.output.appendLine(msg),
       requestChange: this.requestChange,
       changeDone: this.changeDone,
+      askQuestion: this.askQuestion,
     });
     const reasoning: ReasoningOptions | undefined = REASONING_MODELS.has(cfg.model)
       ? { summary: true, effort: 'medium' }
@@ -498,6 +528,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     } finally {
       this.running = false;
       this.clearApprovals();
+      this.clearQuestions();
       this.drainQueue();
     }
   }

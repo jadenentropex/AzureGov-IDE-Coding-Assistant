@@ -129,6 +129,7 @@ The agent executes these tools locally, confined to the workspace root:
 
 | Tool | Access | Notes |
 | --- | --- | --- |
+| ask_options | prompt | Ask you to choose between approaches (clickable options + an Other free-text box). |
 | list_dir | read | List a directory. |
 | read_file | read | Read a UTF-8 file (truncated). |
 | grep | read | Regex search across the workspace. |
