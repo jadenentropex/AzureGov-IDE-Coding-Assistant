@@ -66,6 +66,7 @@ Open the Command Palette and type AzureGov:
 | AzureGov IDE: Clear break-glass API key | azgovIde.clearApiKey | Remove the stored key and cached token. |
 | AzureGov IDE: Verify audit log integrity | azgovIde.verifyAudit | Re-check the hash chain of the local audit log. |
 | AzureGov IDE: Open audit log | azgovIde.openAudit | Open the local audit log (JSONL). |
+| AzureGov IDE: Generate compliance evidence bundle | azgovIde.generateEvidence | Write a control-mapped evidence bundle (JSON + SSP excerpt). |
 
 ## Settings
 
@@ -109,6 +110,12 @@ The signing identity needs the "Monitoring Metrics Publisher" role on the Data C
 Rule. In Azure US Government the Monitor scope is https://monitor.azure.us. Provision the
 Data Collection Endpoint, custom table (AzgovIdeAudit_CL), and Data Collection Rule with
 your workspace, then set the three settings above (org admins can lock them via policy).
+
+Evidence bundle: run "AzureGov IDE: Generate compliance evidence bundle" to write a
+control-mapped report (JSON plus a human-readable SSP excerpt) into an azgov-evidence
+folder. It is derived from the tool's live, effective configuration and audit state
+(including a fresh audit-chain verification), mapped to NIST SP 800-171 / CMMC L2. It is
+a starting point for an assessment, not a certification.
 
 ## Tools and safety
 

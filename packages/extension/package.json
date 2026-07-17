@@ -2,8 +2,8 @@
   "name": "azuregov-ide-coding-assistant",
   "displayName": "AzureGov IDE Coding Assistant",
   "description": "Azure-native AI coding agent for CMMC/CUI - Azure OpenAI Responses API in Azure US Government. Code context never leaves the Gov boundary.",
-  "version": "0.0.15",
-  "publisher": "azgov-ide",
+  "version": "0.0.16",
+  "publisher": "entropex",
   "private": true,
   "license": "Apache-2.0",
   "author": "Entropex, LLC (https://entropex.io)",
@@ -180,7 +180,8 @@
       { "command": "azgovIde.setApiKey", "title": "AzureGov IDE: Set break-glass API key" },
       { "command": "azgovIde.clearApiKey", "title": "AzureGov IDE: Clear break-glass API key" },
       { "command": "azgovIde.verifyAudit", "title": "AzureGov IDE: Verify audit log integrity" },
-      { "command": "azgovIde.openAudit", "title": "AzureGov IDE: Open audit log" }
+      { "command": "azgovIde.openAudit", "title": "AzureGov IDE: Open audit log" },
+      { "command": "azgovIde.generateEvidence", "title": "AzureGov IDE: Generate compliance evidence bundle" }
     ]
   },
   "scripts": {

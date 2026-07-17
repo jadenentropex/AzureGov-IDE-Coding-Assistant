@@ -4,6 +4,7 @@ import { ChatViewProvider } from './chatView';
 import { runAsk } from './ask';
 import { setApiKey, clearApiKey, getMonitorToken } from './auth';
 import { AuditLog, verifyAuditChain } from './audit';
+import { generateEvidence } from './evidence';
 
 let statusBar: vscode.StatusBarItem;
 
@@ -48,6 +49,13 @@ export function activate(ctx: vscode.ExtensionContext): void {
         await vscode.window.showTextDocument(doc);
       } catch {
         void vscode.window.showInformationMessage('No audit log yet - run the agent first.');
+      }
+    }),
+    vscode.commands.registerCommand('azgovIde.generateEvidence', async () => {
+      try {
+        await generateEvidence(ctx, audit, output);
+      } catch (e) {
+        void vscode.window.showErrorMessage(`Evidence generation failed: ${(e as Error).message}`);
       }
     }),
   );
