@@ -1,0 +1,15 @@
+{
+  "name": "create-azgov-ide",
+  "version": "0.0.1",
+  "description": "Guided installer for the AzureGov IDE Coding Assistant - stands up the in-boundary Azure US Government stack and writes locked settings.",
+  "bin": { "create-azgov-ide": "index.js" },
+  "license": "Apache-2.0",
+  "author": "Entropex, LLC (https://entropex.io)",
+  "homepage": "https://entropex.io",
+  "repository": { "type": "git", "url": "https://github.com/jadenentropex/AzureGov-IDE-Coding-Assistant.git" },
+  "files": ["index.js", "README.md"],
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "test": "node test/wizard.test.cjs"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "subscriptionId": "00000000-0000-0000-0000-000000000000",
+  "resourceGroup": "rg-azgov-ide",
+  "location": "usgovvirginia",
+  "namePrefix": "azgov-ide",
+  "deployPrivateEndpoint": false,
+  "privateEndpointSubnetId": "",
+  "disableLocalAuth": true,
+  "callerPrincipalId": "",
+  "callerPrincipalType": "ServicePrincipal",
+  "authMode": "managed",
+  "blockNetworkCommands": false,
+  "commandAllowlist": [],
+  "settingsPath": "."
+}
