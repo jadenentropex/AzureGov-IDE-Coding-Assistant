@@ -2,7 +2,7 @@
   "name": "azuregov-ide-coding-assistant",
   "displayName": "AzureGov IDE Coding Assistant",
   "description": "Azure-native AI coding agent for CMMC/CUI - Azure OpenAI Responses API in Azure US Government. Code context never leaves the Gov boundary.",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "publisher": "azgov-ide",
   "private": true,
   "license": "Apache-2.0",
@@ -149,6 +149,28 @@
           "default": ["gpt-4.1", "gpt-4.1-mini", "gpt-5.1", "o3-mini", "gpt-4o"],
           "scope": "application",
           "markdownDescription": "Org-approved model deployment names. The agent refuses models not on this list. An empty list disables the check."
+        },
+        "azgovIde.commandAllowlist": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "scope": "application",
+          "policy": { "name": "AzgovIdeCommandAllowlist", "minimumVersion": "1.90.0" },
+          "markdownDescription": "If non-empty, run_terminal only permits commands whose executable is on this list (for example `az`, `git`, `terraform`, `npm`, `python`). All other commands are refused. An empty list disables the allowlist (denylist still applies). Org admins can lock this via policy."
+        },
+        "azgovIde.blockNetworkCommands": {
+          "type": "boolean",
+          "default": false,
+          "scope": "application",
+          "policy": { "name": "AzgovIdeBlockNetworkCommands", "minimumVersion": "1.90.0" },
+          "markdownDescription": "Block ad-hoc network/egress commands (curl, wget, Invoke-WebRequest, scp, ssh, nc, ftp, and similar) so CUI cannot be exfiltrated through the terminal. Package managers and Azure CLI are unaffected. Off by default. Org admins can lock this via policy."
+        },
+        "azgovIde.autoModeAllowTerminal": {
+          "type": "boolean",
+          "default": false,
+          "scope": "application",
+          "policy": { "name": "AzgovIdeAutoModeAllowTerminal", "minimumVersion": "1.90.0" },
+          "markdownDescription": "In Auto mode, allow run_terminal to execute without approval. **Off by default**: even in Auto mode, shell commands still require approval unless the executable is on the command allowlist. This limits prompt-injection to code-execution. File edits still auto-apply in Auto mode. Org admins can lock this via policy."
         }
       }
     },

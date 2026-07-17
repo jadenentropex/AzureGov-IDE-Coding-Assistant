@@ -83,6 +83,9 @@ Open the Command Palette and type AzureGov:
 | azgovIde.auditIngestionEndpoint | "" | Logs Ingestion endpoint of a Data Collection Endpoint (Gov: *.ingest.monitor.azure.us). Set to forward off-box. |
 | azgovIde.auditDcrImmutableId | "" | Immutable id of the Data Collection Rule that routes events to the workspace. |
 | azgovIde.auditStreamName | Custom-AzgovIdeAudit_CL | Stream name declared in the DCR (matches the AzgovIdeAudit_CL table). |
+| azgovIde.commandAllowlist | [] | If non-empty, run_terminal only runs these executables. |
+| azgovIde.blockNetworkCommands | false | Block ad-hoc network/egress commands (curl, wget, scp, ssh, ...). |
+| azgovIde.autoModeAllowTerminal | false | Allow run_terminal without approval in Auto mode. Off = shell still needs approval. |
 
 ## Audit and evidence
 
@@ -122,6 +125,22 @@ The agent executes these tools locally, confined to the workspace root:
 
 Safety: workspace-root confinement (no .. escapes), human approval for writes and
 commands, and a command denylist (rm -rf, curl | sh, fork bombs).
+
+Injection and exfiltration defense:
+
+- Untrusted output: every tool result (file contents, command output, API/web
+  responses) is framed to the model as data, and the system prompt forbids obeying
+  any instructions embedded in it. This is the primary defense against prompt
+  injection (the "lethal trifecta" of untrusted content, code execution, and
+  exfiltration).
+- Command allowlist (azgovIde.commandAllowlist): if set, run_terminal only runs
+  allowlisted executables (for example az, git, terraform, npm, python).
+- Egress guard (azgovIde.blockNetworkCommands): blocks ad-hoc network tools (curl,
+  wget, scp, ssh, nc, and similar) so CUI cannot leave the boundary. Package managers
+  and Azure CLI are unaffected.
+- Hard Auto-mode gate (azgovIde.autoModeAllowTerminal): Auto mode auto-applies file
+  edits, but shell commands still require approval unless allowlisted, so a prompt
+  injection cannot silently run commands. Off by default.
 
 ## Build and package
 

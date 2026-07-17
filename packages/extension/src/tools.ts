@@ -60,6 +60,34 @@ const DENY: RegExp[] = [
   /:\(\)\s*\{\s*:\|:&\s*\};:/,
 ];
 
+/**
+ * Ad-hoc network/egress tools. When azgovIde.blockNetworkCommands is on, these are refused so
+ * CUI cannot be exfiltrated through the terminal. Deliberately NOT matched: package managers
+ * (npm, pip, dotnet) and Azure CLI (`az`, `azcopy`) -- they reach known registries / in-boundary
+ * Gov endpoints and are the tool's legitimate purpose. The sanctioned tunnel path is
+ * `az network bastion tunnel`, not raw ssh/scp.
+ */
+const NETWORK: RegExp[] = [
+  /\bcurl\b/i,
+  /\bwget\b/i,
+  /\bInvoke-WebRequest\b/i,
+  /\bInvoke-RestMethod\b/i,
+  /\biwr\b/i,
+  /\birm\b/i,
+  /\bStart-BitsTransfer\b/i,
+  /\bbitsadmin\b/i,
+  /\bcertutil\b[^\n]*-urlcache/i,
+  /\b(nc|ncat|netcat|telnet|ftp|tftp|sftp|scp|rsync|ssh)\b/i,
+];
+
+/** First executable token of a command, stripped of path and extension, lowercased. */
+function firstExe(command: string): string {
+  const m = command.trim().match(/^"([^"]+)"|^(\S+)/);
+  let tok = (m?.[1] ?? m?.[2] ?? '').trim();
+  tok = tok.split(/[\\/]/).pop() ?? tok;
+  return tok.replace(/\.(exe|cmd|bat|ps1|sh)$/i, '').toLowerCase();
+}
+
 /** Bounded line diff → added/removed counts + a compact hunk of changed lines. */
 function lineDiff(oldStr: string, newStr: string): { added: number; removed: number; hunk: string } {
   const a = oldStr === '' ? [] : oldStr.split('\n');
@@ -141,13 +169,20 @@ export function createTools(deps: ToolDeps): Tool[] {
   const { root } = deps;
   const needsApproval = deps.approveWrites && !deps.autoApprove;
 
-  /** Run a mutating action behind an inline approval card (or a modal fallback). */
+  /**
+   * Run a mutating action behind an inline approval card (or a modal fallback).
+   * `approvalOverride` forces the approval prompt on/off for this one call, regardless of the
+   * mode default -- used by the hard Auto-mode gate so shell commands still require a human even
+   * when Auto mode auto-applies file edits.
+   */
   const guarded = async (
     preview: ChangePreview,
     apply: () => Promise<{ message: string; exitCode?: number; output?: string }>,
+    approvalOverride?: boolean,
   ): Promise<string> => {
+    const need = approvalOverride ?? needsApproval;
     if (deps.requestChange) {
-      const { approved, id } = await deps.requestChange(preview, needsApproval);
+      const { approved, id } = await deps.requestChange(preview, need);
       if (!approved) {
         deps.changeDone?.(id, { rejected: true });
         return 'DENIED by user.';
@@ -162,7 +197,7 @@ export function createTools(deps: ToolDeps): Tool[] {
       }
     }
     // Fallback for hosts without a panel.
-    if (needsApproval) {
+    if (need) {
       const detail = preview.command ?? preview.diff ?? preview.path ?? '';
       const title = preview.kind === 'command' ? 'Run command?' : `${preview.kind} ${preview.path}?`;
       const pick = await vscode.window.showWarningMessage(title, { modal: true, detail: detail.slice(0, 2000) }, 'Approve');
@@ -300,7 +335,30 @@ export function createTools(deps: ToolDeps): Tool[] {
       async run(args, ctx) {
         const command = String(args['command']);
         const background = args['background'] === true;
+
+        // Layered command policy (roadmap P0-7).
         if (DENY.some((r) => r.test(command))) return 'BLOCKED: command matches a denied pattern.';
+
+        const policy = vscode.workspace.getConfiguration('azgovIde');
+        const allowlist = (policy.get<string[]>('commandAllowlist', []) ?? []).map((s) => s.toLowerCase());
+        const blockNetwork = policy.get<boolean>('blockNetworkCommands', false);
+        const autoAllowTerminal = policy.get<boolean>('autoModeAllowTerminal', false);
+        const exe = firstExe(command);
+        const onAllowlist = allowlist.length > 0 && allowlist.includes(exe);
+
+        if (allowlist.length > 0 && !onAllowlist) {
+          return `BLOCKED: '${exe}' is not on the command allowlist (azgovIde.commandAllowlist).`;
+        }
+        if (blockNetwork && NETWORK.some((r) => r.test(command))) {
+          return 'BLOCKED: network/egress commands are disabled by policy (azgovIde.blockNetworkCommands) so CUI cannot leave the boundary. Use az / az network bastion tunnel for sanctioned access.';
+        }
+
+        // Hard Auto-mode gate: Auto mode auto-applies file edits, but shell execution still
+        // requires human approval unless the org opted in (autoModeAllowTerminal) or the
+        // executable is explicitly allowlisted. This blunts prompt-injection -> code execution.
+        const gateShell = deps.approveWrites === true && deps.autoApprove === true && !(autoAllowTerminal || onAllowlist);
+        const approvalOverride = needsApproval || gateShell;
+
         return guarded({ kind: 'command', command }, async () => {
           deps.log(`${background ? 'bg' : 'run'}: ${command}`);
           if (background) {
@@ -317,7 +375,7 @@ export function createTools(deps: ToolDeps): Tool[] {
             exitCode: code,
             output: outputPreview,
           };
-        });
+        }, approvalOverride);
       },
     },
   ];
