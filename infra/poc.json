@@ -1,0 +1,731 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.42.1.51946",
+      "templateHash": "13253004428762373892"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Azure US Government region."
+      }
+    },
+    "namePrefix": {
+      "type": "string",
+      "defaultValue": "azgov-poc",
+      "minLength": 3,
+      "maxLength": 18,
+      "metadata": {
+        "description": "Base name; resource names derive from it."
+      }
+    },
+    "deployments": {
+      "type": "array",
+      "defaultValue": [
+        {
+          "name": "gpt-4.1",
+          "version": "2025-04-14",
+          "sku": "Standard",
+          "capacity": 50
+        },
+        {
+          "name": "gpt-5.1",
+          "version": "2025-11-13",
+          "sku": "DataZoneStandard",
+          "capacity": 200
+        }
+      ],
+      "metadata": {
+        "description": "Model deployments. capacity is in thousands of TPM; sku is Standard or DataZoneStandard."
+      }
+    },
+    "vmSize": {
+      "type": "string",
+      "defaultValue": "Standard_D4s_v5",
+      "metadata": {
+        "description": "VM size for the dev box."
+      }
+    },
+    "adminUsername": {
+      "type": "string",
+      "defaultValue": "azgovadmin",
+      "metadata": {
+        "description": "Dev VM local administrator username."
+      }
+    },
+    "adminPassword": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Dev VM local administrator password."
+      }
+    },
+    "allowedRdpSourceIp": {
+      "type": "string",
+      "metadata": {
+        "description": "Source IP or CIDR allowed to RDP to the dev VM (for example 203.0.113.5/32)."
+      }
+    },
+    "repoUrl": {
+      "type": "string",
+      "defaultValue": "https://github.com/jadenentropex/AzureGov-IDE-Coding-Assistant.git",
+      "metadata": {
+        "description": "Public git repo the VM bootstrap clones to build and install the extension."
+      }
+    },
+    "bootstrapScriptUri": {
+      "type": "string",
+      "defaultValue": "https://raw.githubusercontent.com/jadenentropex/AzureGov-IDE-Coding-Assistant/main/infra/bootstrap-devvm.ps1",
+      "metadata": {
+        "description": "Raw URL of the VM bootstrap script."
+      }
+    },
+    "auditRetentionDays": {
+      "type": "int",
+      "defaultValue": 365,
+      "metadata": {
+        "description": "Audit retention in the custom table (days)."
+      }
+    }
+  },
+  "variables": {
+    "aoaiName": "[format('aoai-{0}', parameters('namePrefix'))]",
+    "lawName": "[format('law-{0}', parameters('namePrefix'))]",
+    "dceName": "[format('dce-{0}-audit', parameters('namePrefix'))]",
+    "dcrName": "[format('dcr-{0}-audit', parameters('namePrefix'))]",
+    "tableName": "AzgovIdeAudit_CL",
+    "streamName": "Custom-AzgovIdeAudit_CL",
+    "govDnsZone": "privatelink.openai.azure.us",
+    "vmName": "[take(format('vm-{0}', parameters('namePrefix')), 15)]",
+    "roleOpenAiUser": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')]",
+    "roleMetricsPublisher": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '3913510d-42f4-4e42-8a64-420c390055eb')]",
+    "cols": [
+      {
+        "name": "TimeGenerated",
+        "t": "datetime"
+      },
+      {
+        "name": "Seq",
+        "t": "long"
+      },
+      {
+        "name": "SessionId",
+        "t": "string"
+      },
+      {
+        "name": "EventType",
+        "t": "string"
+      },
+      {
+        "name": "ActorSource",
+        "t": "string"
+      },
+      {
+        "name": "ActorOid",
+        "t": "string"
+      },
+      {
+        "name": "ActorUpn",
+        "t": "string"
+      },
+      {
+        "name": "ActorName",
+        "t": "string"
+      },
+      {
+        "name": "ActorTenantId",
+        "t": "string"
+      },
+      {
+        "name": "AppId",
+        "t": "string"
+      },
+      {
+        "name": "MiResource",
+        "t": "string"
+      },
+      {
+        "name": "Host",
+        "t": "string"
+      },
+      {
+        "name": "Model",
+        "t": "string"
+      },
+      {
+        "name": "Endpoint",
+        "t": "string"
+      },
+      {
+        "name": "Mode",
+        "t": "string"
+      },
+      {
+        "name": "ResponseId",
+        "t": "string"
+      },
+      {
+        "name": "Tool",
+        "t": "string"
+      },
+      {
+        "name": "ToolArgs",
+        "t": "string"
+      },
+      {
+        "name": "ToolResult",
+        "t": "string"
+      },
+      {
+        "name": "ChangeId",
+        "t": "string"
+      },
+      {
+        "name": "ChangeKind",
+        "t": "string"
+      },
+      {
+        "name": "ChangePath",
+        "t": "string"
+      },
+      {
+        "name": "Command",
+        "t": "string"
+      },
+      {
+        "name": "LinesAdded",
+        "t": "long"
+      },
+      {
+        "name": "LinesRemoved",
+        "t": "long"
+      },
+      {
+        "name": "BeforeSha",
+        "t": "string"
+      },
+      {
+        "name": "AfterSha",
+        "t": "string"
+      },
+      {
+        "name": "NeedsApproval",
+        "t": "bool"
+      },
+      {
+        "name": "Approved",
+        "t": "bool"
+      },
+      {
+        "name": "Ok",
+        "t": "bool"
+      },
+      {
+        "name": "Rejected",
+        "t": "bool"
+      },
+      {
+        "name": "ExitCode",
+        "t": "long"
+      },
+      {
+        "name": "ErrorMessage",
+        "t": "string"
+      },
+      {
+        "name": "InputTokens",
+        "t": "long"
+      },
+      {
+        "name": "OutputTokens",
+        "t": "long"
+      },
+      {
+        "name": "CostUsd",
+        "t": "real"
+      },
+      {
+        "name": "Steps",
+        "t": "long"
+      },
+      {
+        "name": "Messages",
+        "t": "long"
+      },
+      {
+        "name": "Hash",
+        "t": "string"
+      },
+      {
+        "name": "PrevHash",
+        "t": "string"
+      },
+      {
+        "name": "RawEvent",
+        "t": "string"
+      }
+    ],
+    "tableTypes": {
+      "datetime": "dateTime",
+      "long": "long",
+      "real": "real",
+      "bool": "boolean",
+      "string": "string"
+    },
+    "streamTypes": {
+      "datetime": "datetime",
+      "long": "long",
+      "real": "real",
+      "bool": "boolean",
+      "string": "string"
+    },
+    "tableColumns": "[map(variables('cols'), lambda('c', createObject('name', lambdaVariables('c').name, 'type', variables('tableTypes')[lambdaVariables('c').t])))]",
+    "streamColumns": "[map(variables('cols'), lambda('c', createObject('name', lambdaVariables('c').name, 'type', variables('streamTypes')[lambdaVariables('c').t])))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "apiVersion": "2023-11-01",
+      "name": "[format('nsg-{0}-vm', parameters('namePrefix'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "securityRules": [
+          {
+            "name": "allow-rdp-from-client",
+            "properties": {
+              "priority": 300,
+              "direction": "Inbound",
+              "access": "Allow",
+              "protocol": "Tcp",
+              "sourceAddressPrefix": "[if(empty(parameters('allowedRdpSourceIp')), '127.0.0.1/32', parameters('allowedRdpSourceIp'))]",
+              "sourcePortRange": "*",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "3389"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "2023-11-01",
+      "name": "[format('vnet-{0}', parameters('namePrefix'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "10.20.0.0/16"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "snet-pe",
+            "properties": {
+              "addressPrefix": "10.20.1.0/24",
+              "privateEndpointNetworkPolicies": "Disabled"
+            }
+          },
+          {
+            "name": "snet-vm",
+            "properties": {
+              "addressPrefix": "10.20.2.0/24",
+              "networkSecurityGroup": {
+                "id": "[resourceId('Microsoft.Network/networkSecurityGroups', format('nsg-{0}-vm', parameters('namePrefix')))]"
+              }
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkSecurityGroups', format('nsg-{0}-vm', parameters('namePrefix')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.CognitiveServices/accounts",
+      "apiVersion": "2024-10-01",
+      "name": "[variables('aoaiName')]",
+      "location": "[parameters('location')]",
+      "kind": "OpenAI",
+      "sku": {
+        "name": "S0"
+      },
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "customSubDomainName": "[variables('aoaiName')]",
+        "publicNetworkAccess": "Disabled",
+        "disableLocalAuth": true
+      }
+    },
+    {
+      "copy": {
+        "name": "modelDeployments",
+        "count": "[length(parameters('deployments'))]",
+        "mode": "serial",
+        "batchSize": 1
+      },
+      "type": "Microsoft.CognitiveServices/accounts/deployments",
+      "apiVersion": "2024-10-01",
+      "name": "[format('{0}/{1}', variables('aoaiName'), parameters('deployments')[copyIndex()].name)]",
+      "sku": {
+        "name": "[parameters('deployments')[copyIndex()].sku]",
+        "capacity": "[parameters('deployments')[copyIndex()].capacity]"
+      },
+      "properties": {
+        "model": {
+          "format": "OpenAI",
+          "name": "[parameters('deployments')[copyIndex()].name]",
+          "version": "[parameters('deployments')[copyIndex()].version]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('aoaiName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "apiVersion": "2022-10-01",
+      "name": "[variables('lawName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "sku": {
+          "name": "PerGB2018"
+        },
+        "retentionInDays": 90
+      }
+    },
+    {
+      "type": "Microsoft.Insights/diagnosticSettings",
+      "apiVersion": "2021-05-01-preview",
+      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', variables('aoaiName'))]",
+      "name": "to-law",
+      "properties": {
+        "workspaceId": "[resourceId('Microsoft.OperationalInsights/workspaces', variables('lawName'))]",
+        "logs": [
+          {
+            "categoryGroup": "audit",
+            "enabled": true
+          },
+          {
+            "categoryGroup": "allLogs",
+            "enabled": true
+          }
+        ],
+        "metrics": [
+          {
+            "category": "AllMetrics",
+            "enabled": true
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('aoaiName'))]",
+        "[resourceId('Microsoft.OperationalInsights/workspaces', variables('lawName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/privateEndpoints",
+      "apiVersion": "2023-11-01",
+      "name": "[format('pe-{0}', variables('aoaiName'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "subnet": {
+          "id": "[format('{0}/subnets/snet-pe', resourceId('Microsoft.Network/virtualNetworks', format('vnet-{0}', parameters('namePrefix'))))]"
+        },
+        "privateLinkServiceConnections": [
+          {
+            "name": "aoai",
+            "properties": {
+              "privateLinkServiceId": "[resourceId('Microsoft.CognitiveServices/accounts', variables('aoaiName'))]",
+              "groupIds": [
+                "account"
+              ]
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('aoaiName'))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-{0}', parameters('namePrefix')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/privateDnsZones",
+      "apiVersion": "2020-06-01",
+      "name": "[variables('govDnsZone')]",
+      "location": "global"
+    },
+    {
+      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+      "apiVersion": "2020-06-01",
+      "name": "[format('{0}/{1}', variables('govDnsZone'), 'vnet-link')]",
+      "location": "global",
+      "properties": {
+        "registrationEnabled": false,
+        "virtualNetwork": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-{0}', parameters('namePrefix')))]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('govDnsZone'))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-{0}', parameters('namePrefix')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+      "apiVersion": "2023-11-01",
+      "name": "[format('{0}/{1}', format('pe-{0}', variables('aoaiName')), 'default')]",
+      "properties": {
+        "privateDnsZoneConfigs": [
+          {
+            "name": "openai",
+            "properties": {
+              "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', variables('govDnsZone'))]"
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('govDnsZone'))]",
+        "[resourceId('Microsoft.Network/privateEndpoints', format('pe-{0}', variables('aoaiName')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Insights/dataCollectionEndpoints",
+      "apiVersion": "2023-03-11",
+      "name": "[variables('dceName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "networkAcls": {
+          "publicNetworkAccess": "Enabled"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.OperationalInsights/workspaces/tables",
+      "apiVersion": "2022-10-01",
+      "name": "[format('{0}/{1}', variables('lawName'), variables('tableName'))]",
+      "properties": {
+        "schema": {
+          "name": "[variables('tableName')]",
+          "columns": "[variables('tableColumns')]"
+        },
+        "retentionInDays": 90,
+        "totalRetentionInDays": "[parameters('auditRetentionDays')]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces', variables('lawName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Insights/dataCollectionRules",
+      "apiVersion": "2023-03-11",
+      "name": "[variables('dcrName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "dataCollectionEndpointId": "[resourceId('Microsoft.Insights/dataCollectionEndpoints', variables('dceName'))]",
+        "streamDeclarations": {
+          "[format('{0}', variables('streamName'))]": {
+            "columns": "[variables('streamColumns')]"
+          }
+        },
+        "destinations": {
+          "logAnalytics": [
+            {
+              "workspaceResourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', variables('lawName'))]",
+              "name": "law"
+            }
+          ]
+        },
+        "dataFlows": [
+          {
+            "streams": [
+              "[variables('streamName')]"
+            ],
+            "destinations": [
+              "law"
+            ],
+            "transformKql": "source",
+            "outputStream": "[variables('streamName')]"
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces/tables', variables('lawName'), variables('tableName'))]",
+        "[resourceId('Microsoft.Insights/dataCollectionEndpoints', variables('dceName'))]",
+        "[resourceId('Microsoft.OperationalInsights/workspaces', variables('lawName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/publicIPAddresses",
+      "apiVersion": "2023-11-01",
+      "name": "[format('pip-{0}', variables('vmName'))]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "Standard"
+      },
+      "properties": {
+        "publicIPAllocationMethod": "Static"
+      }
+    },
+    {
+      "type": "Microsoft.Network/networkInterfaces",
+      "apiVersion": "2023-11-01",
+      "name": "[format('nic-{0}', variables('vmName'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "ipconfig1",
+            "properties": {
+              "subnet": {
+                "id": "[format('{0}/subnets/snet-vm', resourceId('Microsoft.Network/virtualNetworks', format('vnet-{0}', parameters('namePrefix'))))]"
+              },
+              "privateIPAllocationMethod": "Dynamic",
+              "publicIPAddress": {
+                "id": "[resourceId('Microsoft.Network/publicIPAddresses', format('pip-{0}', variables('vmName')))]"
+              }
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/publicIPAddresses', format('pip-{0}', variables('vmName')))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-{0}', parameters('namePrefix')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Compute/virtualMachines",
+      "apiVersion": "2023-09-01",
+      "name": "[variables('vmName')]",
+      "location": "[parameters('location')]",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "hardwareProfile": {
+          "vmSize": "[parameters('vmSize')]"
+        },
+        "osProfile": {
+          "computerName": "[variables('vmName')]",
+          "adminUsername": "[parameters('adminUsername')]",
+          "adminPassword": "[parameters('adminPassword')]"
+        },
+        "storageProfile": {
+          "imageReference": {
+            "publisher": "MicrosoftWindowsServer",
+            "offer": "WindowsServer",
+            "sku": "2022-datacenter-azure-edition",
+            "version": "latest"
+          },
+          "osDisk": {
+            "createOption": "FromImage",
+            "managedDisk": {
+              "storageAccountType": "Premium_LRS"
+            }
+          }
+        },
+        "networkProfile": {
+          "networkInterfaces": [
+            {
+              "id": "[resourceId('Microsoft.Network/networkInterfaces', format('nic-{0}', variables('vmName')))]"
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkInterfaces', format('nic-{0}', variables('vmName')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Compute/virtualMachines/extensions",
+      "apiVersion": "2023-09-01",
+      "name": "[format('{0}/{1}', variables('vmName'), 'bootstrap')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "publisher": "Microsoft.Compute",
+        "type": "CustomScriptExtension",
+        "typeHandlerVersion": "1.10",
+        "autoUpgradeMinorVersion": true,
+        "settings": {
+          "fileUris": [
+            "[parameters('bootstrapScriptUri')]"
+          ],
+          "commandToExecute": "[format('powershell -ExecutionPolicy Bypass -File bootstrap-devvm.ps1 -Endpoint \"{0}\" -DceIngest \"{1}\" -DcrId \"{2}\" -Stream \"{3}\" -RepoUrl \"{4}\" -AdminUser \"{5}\"', reference(resourceId('Microsoft.CognitiveServices/accounts', variables('aoaiName')), '2024-10-01').endpoint, reference(resourceId('Microsoft.Insights/dataCollectionEndpoints', variables('dceName')), '2023-03-11').logsIngestion.endpoint, reference(resourceId('Microsoft.Insights/dataCollectionRules', variables('dcrName')), '2023-03-11').immutableId, variables('streamName'), parameters('repoUrl'), parameters('adminUsername'))]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('aoaiName'))]",
+        "[resourceId('Microsoft.Insights/dataCollectionEndpoints', variables('dceName'))]",
+        "[resourceId('Microsoft.Insights/dataCollectionRules', variables('dcrName'))]",
+        "[resourceId('Microsoft.Compute/virtualMachines', variables('vmName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', variables('aoaiName'))]",
+      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', variables('aoaiName')), variables('vmName'), 'openai-user')]",
+      "properties": {
+        "roleDefinitionId": "[variables('roleOpenAiUser')]",
+        "principalId": "[reference(resourceId('Microsoft.Compute/virtualMachines', variables('vmName')), '2023-09-01', 'full').identity.principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('aoaiName'))]",
+        "[resourceId('Microsoft.Compute/virtualMachines', variables('vmName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.Insights/dataCollectionRules', variables('dcrName'))]",
+      "name": "[guid(resourceId('Microsoft.Insights/dataCollectionRules', variables('dcrName')), variables('vmName'), 'metrics-publisher')]",
+      "properties": {
+        "roleDefinitionId": "[variables('roleMetricsPublisher')]",
+        "principalId": "[reference(resourceId('Microsoft.Compute/virtualMachines', variables('vmName')), '2023-09-01', 'full').identity.principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Insights/dataCollectionRules', variables('dcrName'))]",
+        "[resourceId('Microsoft.Compute/virtualMachines', variables('vmName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "openAiEndpoint": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.CognitiveServices/accounts', variables('aoaiName')), '2024-10-01').endpoint]"
+    },
+    "workspaceId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.OperationalInsights/workspaces', variables('lawName')), '2022-10-01').customerId]"
+    },
+    "auditIngestionEndpoint": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Insights/dataCollectionEndpoints', variables('dceName')), '2023-03-11').logsIngestion.endpoint]"
+    },
+    "auditDcrImmutableId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Insights/dataCollectionRules', variables('dcrName')), '2023-03-11').immutableId]"
+    },
+    "auditStreamName": {
+      "type": "string",
+      "value": "[variables('streamName')]"
+    },
+    "devVmName": {
+      "type": "string",
+      "value": "[variables('vmName')]"
+    },
+    "devVmPublicIp": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Network/publicIPAddresses', format('pip-{0}', variables('vmName'))), '2023-11-01').ipAddress]"
+    }
+  }
+}

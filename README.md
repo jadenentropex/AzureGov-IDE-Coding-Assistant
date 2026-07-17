@@ -134,6 +134,18 @@ deliberately not used - it retires 2026-08-26.
 
 ## Quick start
 
+### Option 0: one-click POC in the Azure Government portal
+
+Evaluating it? Deploy a self-contained proof of concept into your own Gov subscription straight
+from the portal - no local tooling. Sign into your tenant, fill a short form, and it stands up
+the in-boundary backend plus a ready-to-use dev VM (VS Code + the extension + tooling
+pre-installed and pointed at the fresh endpoint).
+
+[![Deploy to Azure Government](https://aka.ms/deploytoazurebutton)](https://portal.azure.us/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fjadenentropex%2FAzureGov-IDE-Coding-Assistant%2Fmain%2Finfra%2Fpoc.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2Fjadenentropex%2FAzureGov-IDE-Coding-Assistant%2Fmain%2Finfra%2FcreateUiDefinition.json)
+
+Full walkthrough, prerequisites, and teardown: [docs/POC-DEPLOY.md](docs/POC-DEPLOY.md). For a
+production install into an existing environment, use Option A or B below.
+
 ### Option A: guided install (recommended)
 
 Requires the Azure CLI logged in to Azure US Government and rights to create resources and role
@@ -214,12 +226,16 @@ packages/
   extension/         VS Code extension (chat panel, local tools, auth, audit, evidence)
   create-azgov-ide/  guided installer (Bicep deploy + locked settings), zero deps
 infra/
-  main.bicep         resource-group stack: Azure OpenAI + PE, Log Analytics, DCE/DCR + roles
+  main.bicep             backend-only stack: Azure OpenAI + PE, Log Analytics, DCE/DCR + roles
+  poc.bicep / poc.json   turnkey POC: network + backend + bootstrapped dev VM (portal deploy)
+  createUiDefinition.json  Azure portal form for the one-click POC
+  bootstrap-devvm.ps1    dev-VM bootstrap (VS Code + extension + toolchain)
 scripts/
-  sign-vsix.ps1      SHA-256 + detached PKCS#7 signature for the VSIX
-  verify-vsix.ps1    verify checksum + signature before sideloading
+  sign-vsix.ps1          SHA-256 + detached PKCS#7 signature for the VSIX
+  verify-vsix.ps1        verify checksum + signature before sideloading
 docs/
-  SIGNING.md         signing / verification workflow
+  SIGNING.md             signing / verification workflow
+  POC-DEPLOY.md          one-click portal POC walkthrough
 ```
 
 ## Development
