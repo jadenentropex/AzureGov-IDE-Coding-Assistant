@@ -58,6 +58,7 @@ export function activate(ctx: vscode.ExtensionContext): void {
         void vscode.window.showErrorMessage(`Evidence generation failed: ${(e as Error).message}`);
       }
     }),
+    vscode.commands.registerCommand('azgovIde.rollbackLast', () => chatProvider.rollbackLast()),
   );
 
   statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);

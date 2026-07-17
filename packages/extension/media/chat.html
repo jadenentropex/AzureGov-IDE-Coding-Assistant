@@ -118,7 +118,7 @@
   </header>
 
   <div class="costbar">
-    <span><span class="lbl">This chat:</span> <span class="usd" id="sUsd">$0.00</span> <span class="tok" id="sTok">0 tok</span></span>
+    <span><span class="lbl">This chat:</span> <span class="usd" id="sUsd">$0.00</span><span class="lbl" id="sBudget"></span> <span class="tok" id="sTok">0 tok</span></span>
     <span class="spacer" style="flex:1"></span>
     <span><span class="lbl">All-time:</span> <span class="usd" id="aUsd">$0.00</span> <span class="tok" id="aTok">0 tok</span></span>
   </div>
@@ -205,7 +205,7 @@
     function renderDiff(diff) { return (diff || '').split('\n').map(function (l) { var c = l.charAt(0); var cls = c === '+' ? 'dl-add' : c === '-' ? 'dl-rem' : 'dl-ctx'; return '<span class="' + cls + '">' + esc(l) + '</span>'; }).join(''); }
     function makeChangeCard(id, preview, needsApproval) {
       hideEmpty(); removeStatus(); preview = preview || {};
-      var card = document.createElement('div'); card.className = 'change'; card.dataset.id = id;
+      var card = document.createElement('div'); card.className = 'change'; card.dataset.id = id; card.dataset.kind = preview.kind || '';
       var head = document.createElement('div'); head.className = 'chg-head';
       var title = preview.kind === 'command' ? ('$ ' + (preview.command || '')) : (preview.path || '');
       var badges = (preview.kind === 'create' || preview.kind === 'edit') ? '<span class="chg-badges"><span class="add">+' + (preview.added || 0) + '</span> <span class="rem">-' + (preview.removed || 0) + '</span></span>' : '';
@@ -228,13 +228,30 @@
       var st = card && card.querySelector('.chg-status'); if (st) st.textContent = approved ? 'Approving…' : 'Rejected';
       vscode.postMessage({ type: 'approvalResponse', id: id, approved: approved });
     }
-    function finalizeCard(id, result) {
+    function finalizeCard(id, result, undoable) {
       var card = cards[id]; if (!card) return; result = result || {};
       if (card._actions) { card._actions.remove(); card._actions = null; }
       var st = card.querySelector('.chg-status');
       if (result.rejected) { st.textContent = '✗ Rejected'; st.className = 'chg-status rej'; card.classList.add('rejected'); }
       else if (result.error) { st.textContent = '⚠ ' + result.error; st.className = 'chg-status err'; }
-      else { st.textContent = (result.exitCode != null) ? ('exit ' + result.exitCode) : '✓ Applied'; st.className = 'chg-status ok'; if (result.output) { var pre = document.createElement('pre'); pre.className = 'chg-out'; pre.textContent = result.output; card.appendChild(pre); } }
+      else {
+        st.textContent = (result.exitCode != null) ? ('exit ' + result.exitCode) : '✓ Applied'; st.className = 'chg-status ok';
+        if (result.output) { var pre = document.createElement('pre'); pre.className = 'chg-out'; pre.textContent = result.output; card.appendChild(pre); }
+        if (undoable) {
+          var act = document.createElement('div'); act.className = 'chg-actions';
+          var ub = document.createElement('button'); ub.className = 'reject'; ub.textContent = 'Undo';
+          ub.addEventListener('click', function () { ub.disabled = true; st.textContent = 'Reverting…'; vscode.postMessage({ type: 'undo', id: id }); });
+          act.appendChild(ub); card.appendChild(act); card._undo = act;
+        }
+      }
+      scrollDown();
+    }
+    function finalizeUndo(id, ok, message) {
+      var card = cards[id]; if (!card) return;
+      if (card._undo) { card._undo.remove(); card._undo = null; }
+      var st = card.querySelector('.chg-status');
+      if (ok) { st.textContent = '↺ Reverted'; st.className = 'chg-status'; card.classList.add('rejected'); }
+      else { st.textContent = '⚠ Undo failed' + (message ? ': ' + message : ''); st.className = 'chg-status err'; }
       scrollDown();
     }
 
@@ -274,12 +291,19 @@
         case 'tool': closeBubble(); addTool(m.tool + '(' + (m.args || '').slice(0, 70) + ')'); if (running) startThink(); break;
         case 'change': closeBubble(); makeChangeCard(m.id, m.preview, false); break;
         case 'approvalRequest': closeBubble(); stopThink(); makeChangeCard(m.id, m.preview, true); break;
-        case 'changeResult': finalizeCard(m.id, m.result); if (running) startThink(); break;
+        case 'changeResult': finalizeCard(m.id, m.result, m.undoable); if (running) startThink(); break;
+        case 'undoResult': finalizeUndo(m.id, m.ok, m.message); break;
         case 'status': showStatus(m.text || 'Working…'); break;
         case 'compacted': removeStatus(); addCompacted(m.summary || ''); break;
         case 'cost':
           if (m.session) { document.getElementById('sUsd').textContent = fmtUsd(m.session.usd); document.getElementById('sTok').textContent = fmtTok(m.session.total); }
           if (m.allTime) { document.getElementById('aUsd').textContent = fmtUsd(m.allTime.usd); document.getElementById('aTok').textContent = fmtTok(m.allTime.total); }
+          if ('budgetUsd' in m) {
+            const b = m.budgetUsd || 0; const bEl = document.getElementById('sBudget');
+            bEl.textContent = b > 0 ? ' / ' + fmtUsd(b) : '';
+            const near = b > 0 && m.session && m.session.usd >= 0.8 * b;
+            document.getElementById('sUsd').style.color = near ? 'var(--vscode-charts-red, #f14c4c)' : '';
+          }
           if (m.turn) turnMeta = m.turn;
           break;
         case 'done': stopThink(); removeStatus(); closeBubble(); if (thinking && thinking.parentElement) thinking.parentElement.open = false; addMeta(turnMeta); setRunning(false); scrollDown(); break;

@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { readFileSync } from 'node:fs';
+import { readFileSync, promises as fsp } from 'node:fs';
 import * as path from 'node:path';
 import {
   ResponsesAdapter,
@@ -11,8 +11,9 @@ import {
 import { readConfig, assertBoundary } from './config';
 import { getTokenProvider } from './auth';
 import { createTools, type ChangePreview, type ChangeResult } from './tools';
-import { computeCost } from './pricing';
+import { computeCost, fmtUsd } from './pricing';
 import { AuditLog, decodeTokenIdentity } from './audit';
+import { redactIfEnabled } from './redact';
 
 const READONLY_TOOL_NAMES = new Set(['list_dir', 'read_file', 'grep']);
 
@@ -78,6 +79,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private queue: { text: string; mode: Mode }[] = [];
   private actorResolved = false;
   private startedSessions = new Set<string>();
+  private budgetHit = false;
+  /** Undo entries for applied file writes (most recent last), for one-click rollback. */
+  private undoStack: { id: string; path: string; rel: string; before: string | null }[] = [];
 
   /** Post an inline change/approval card; resolve when the user decides (or auto). */
   private requestChange = (preview: ChangePreview, needsApproval: boolean): Promise<{ approved: boolean; id: string }> => {
@@ -109,8 +113,42 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       error: result.error,
       exitCode: result.exitCode,
     });
-    this.post({ type: 'changeResult', id, result });
+    let undoable = false;
+    if (result.ok && result.undo) {
+      this.undoStack.push({ id, ...result.undo });
+      if (this.undoStack.length > 200) this.undoStack.shift();
+      undoable = true;
+    }
+    this.post({ type: 'changeResult', id, result: { ...result, undo: undefined }, undoable });
   };
+
+  /** Restore a recorded file write (delete if it was newly created). Returns whether it applied. */
+  private async revert(entry: { id: string; path: string; rel: string; before: string | null }): Promise<boolean> {
+    try {
+      if (entry.before === null) await fsp.rm(entry.path, { force: true });
+      else await fsp.writeFile(entry.path, entry.before, 'utf8');
+      this.undoStack = this.undoStack.filter((e) => e.id !== entry.id);
+      void this.audit.append('rollback', this.current.id, { path: entry.rel, restored: entry.before === null ? 'deleted' : 'reverted' });
+      this.output.appendLine(`[rollback] ${entry.before === null ? 'deleted' : 'reverted'} ${entry.rel}`);
+      this.post({ type: 'undoResult', id: entry.id, ok: true });
+      return true;
+    } catch (e) {
+      this.post({ type: 'undoResult', id: entry.id, ok: false, message: (e as Error).message });
+      return false;
+    }
+  }
+
+  /** Undo the most recent applied file write in this chat (command palette / keybinding). */
+  public async rollbackLast(): Promise<void> {
+    const entry = this.undoStack[this.undoStack.length - 1];
+    if (!entry) {
+      void vscode.window.showInformationMessage('AzureGov IDE: no agent file change to undo in this chat.');
+      return;
+    }
+    const ok = await this.revert(entry);
+    if (ok) void vscode.window.showInformationMessage(`AzureGov IDE: reverted ${entry.rel}.`);
+    else void vscode.window.showErrorMessage(`AzureGov IDE: could not revert ${entry.rel}.`);
+  }
 
   private clearApprovals(): void {
     this.approvals.forEach((resolve) => resolve(false));
@@ -200,6 +238,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
         await this.saveCurrent();
         this.current = this.freshSession();
+        this.undoStack = [];
         this.post({ type: 'cleared' });
         this.postTotals();
         break;
@@ -210,6 +249,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case 'setKey':
         await vscode.commands.executeCommand('azgovIde.setApiKey');
         break;
+      case 'undo': {
+        const entry = this.undoStack.find((e) => e.id === (m.id ?? ''));
+        if (entry) await this.revert(entry);
+        else this.post({ type: 'undoResult', id: m.id, ok: false, message: 'nothing to undo' });
+        break;
+      }
       case 'getHistory':
         this.postHistory();
         break;
@@ -246,6 +291,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       assertBoundary(cfg);
     } catch (e) {
       this.post({ type: 'error', message: (e as Error).message });
+      return;
+    }
+
+    // Cost budget: refuse to start a turn once this chat has reached its per-chat budget.
+    if (cfg.costBudgetUsd > 0 && this.current.costUsd >= cfg.costBudgetUsd) {
+      this.post({
+        type: 'error',
+        message: `Cost budget of ${fmtUsd(cfg.costBudgetUsd)} reached for this chat (spent ${fmtUsd(this.current.costUsd)}). Start a new chat or raise azgovIde.costBudgetUsd.`,
+      });
+      void this.audit.append('budget_block', this.current.id, { costUsd: this.current.costUsd, budgetUsd: cfg.costBudgetUsd });
       return;
     }
 
@@ -308,6 +363,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       ? { summary: true, effort: 'medium' }
       : undefined;
 
+    // Mid-turn cost enforcement: a single turn can make many model calls, so track the running
+    // spend and stop the loop the moment the chat's total would cross the budget.
+    this.budgetHit = false;
+    const interim: AgentUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+
     try {
       const result = await runAgentTurn({
         brain,
@@ -327,13 +387,25 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
               inputTokens: e.usage?.inputTokens,
               outputTokens: e.usage?.outputTokens,
             });
+            if (e.usage) {
+              interim.inputTokens += e.usage.inputTokens ?? 0;
+              interim.outputTokens += e.usage.outputTokens ?? 0;
+              interim.totalTokens += e.usage.totalTokens ?? ((e.usage.inputTokens ?? 0) + (e.usage.outputTokens ?? 0));
+              if (cfg.costBudgetUsd > 0) {
+                const projected = this.current.costUsd + computeCost(cfg.model, interim.inputTokens, interim.outputTokens);
+                if (projected >= cfg.costBudgetUsd && !this.abort?.signal.aborted) {
+                  this.budgetHit = true;
+                  this.abort?.abort();
+                }
+              }
+            }
           } else if (e.type === 'tool_call') {
             // Mutating tools render as rich change/approval cards (via requestChange); only show a
             // plain line for read-only tools here.
-            if (READONLY_TOOL_NAMES.has(e.tool ?? '')) this.post({ type: 'tool', tool: e.tool, args: e.args });
+            if (READONLY_TOOL_NAMES.has(e.tool ?? '')) this.post({ type: 'tool', tool: e.tool, args: redactIfEnabled(e.args ?? '') });
             void this.audit.append('tool_call', this.current.id, { tool: e.tool, args: (e.args ?? '').slice(0, 500) });
           } else if (e.type === 'tool_result') {
-            this.output.appendLine(`  <- ${e.tool}: ${(e.result ?? '').slice(0, 200)}`);
+            this.output.appendLine(`  <- ${e.tool}: ${redactIfEnabled((e.result ?? '').slice(0, 200))}`);
             void this.audit.append('tool_result', this.current.id, { tool: e.tool, result: (e.result ?? '').slice(0, 500) });
           }
         },
@@ -358,12 +430,25 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         turn: { input: result.usage.inputTokens, output: result.usage.outputTokens, total: result.usage.totalTokens, usd: turnCost },
         session: { input: this.current.inTok, output: this.current.outTok, total: this.current.inTok + this.current.outTok, usd: this.current.costUsd },
         allTime: { total: this.ctx.globalState.get<number>(ALL_TOKENS_KEY, 0), usd: this.ctx.globalState.get<number>(ALL_USD_KEY, 0) },
+        budgetUsd: cfg.costBudgetUsd,
       });
+      // Soft warning as the chat approaches its budget.
+      if (cfg.costBudgetUsd > 0 && this.current.costUsd >= 0.8 * cfg.costBudgetUsd && this.current.costUsd < cfg.costBudgetUsd) {
+        this.post({ type: 'status', text: `Heads up: this chat has spent ${fmtUsd(this.current.costUsd)} of its ${fmtUsd(cfg.costBudgetUsd)} budget.` });
+      }
       this.post({ type: 'done' });
     } catch (e) {
       if (this.abort?.signal.aborted) {
-        void this.audit.append('cancelled', this.current.id, {});
-        this.post({ type: 'status', text: 'Stopped.' });
+        if (this.budgetHit) {
+          // Record the partial spend so the budget stays enforced on the next turn.
+          await this.applyUsage(cfg.model, interim);
+          void this.audit.append('budget_stop', this.current.id, { costUsd: this.current.costUsd, budgetUsd: cfg.costBudgetUsd });
+          this.post({ type: 'error', message: `Stopped: this chat reached its ${fmtUsd(cfg.costBudgetUsd)} cost budget (spent ${fmtUsd(this.current.costUsd)}). Start a new chat or raise azgovIde.costBudgetUsd.` });
+          this.postTotals();
+        } else {
+          void this.audit.append('cancelled', this.current.id, {});
+          this.post({ type: 'status', text: 'Stopped.' });
+        }
         this.post({ type: 'done' });
       } else {
         void this.audit.append('error', this.current.id, { message: (e as Error).message });
@@ -455,6 +540,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       type: 'cost',
       session: { input: this.current.inTok, output: this.current.outTok, total: this.current.inTok + this.current.outTok, usd: this.current.costUsd },
       allTime: { total: this.ctx.globalState.get<number>(ALL_TOKENS_KEY, 0), usd: this.ctx.globalState.get<number>(ALL_USD_KEY, 0) },
+      budgetUsd: readConfig().costBudgetUsd,
     });
   }
 

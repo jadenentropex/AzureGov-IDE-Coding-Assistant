@@ -67,6 +67,7 @@ Open the Command Palette and type AzureGov:
 | AzureGov IDE: Verify audit log integrity | azgovIde.verifyAudit | Re-check the hash chain of the local audit log. |
 | AzureGov IDE: Open audit log | azgovIde.openAudit | Open the local audit log (JSONL). |
 | AzureGov IDE: Generate compliance evidence bundle | azgovIde.generateEvidence | Write a control-mapped evidence bundle (JSON + SSP excerpt). |
+| AzureGov IDE: Undo last agent file change | azgovIde.rollbackLast | Revert the most recent file the agent wrote in this chat. |
 
 ## Settings
 
@@ -87,6 +88,8 @@ Open the Command Palette and type AzureGov:
 | azgovIde.commandAllowlist | [] | If non-empty, run_terminal only runs these executables. |
 | azgovIde.blockNetworkCommands | false | Block ad-hoc network/egress commands (curl, wget, scp, ssh, ...). |
 | azgovIde.autoModeAllowTerminal | false | Allow run_terminal without approval in Auto mode. Off = shell still needs approval. |
+| azgovIde.redactSecrets | true | Mask secrets in the audit log, change cards, and tool output. |
+| azgovIde.costBudgetUsd | 0 | Max estimated USD per chat before the agent stops. 0 disables. |
 
 ## Audit and evidence
 
@@ -148,6 +151,18 @@ Injection and exfiltration defense:
 - Hard Auto-mode gate (azgovIde.autoModeAllowTerminal): Auto mode auto-applies file
   edits, but shell commands still require approval unless allowlisted, so a prompt
   injection cannot silently run commands. Off by default.
+- Secret redaction (azgovIde.redactSecrets): keys, tokens, passwords, private keys,
+  and connection strings are masked in the audit log (which is forwarded off-box),
+  the change/approval cards, and tool output. Value-level masking keeps the command
+  or diff readable. Bytes written to disk and what the model receives are unchanged.
+
+Cost control and rollback:
+
+- Cost budget (azgovIde.costBudgetUsd): set a per-chat USD ceiling. The agent refuses
+  to start a turn once the chat reaches the budget and stops mid-turn if a turn would
+  cross it. The cost bar shows spend against the budget. 0 disables.
+- Undo: every file the agent writes can be reverted from an Undo button on its change
+  card, or with "AzureGov IDE: Undo last agent file change" (undoes the most recent).
 
 ## Build and package
 

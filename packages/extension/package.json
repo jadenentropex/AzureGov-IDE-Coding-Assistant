@@ -2,7 +2,7 @@
   "name": "azuregov-ide-coding-assistant",
   "displayName": "AzureGov IDE Coding Assistant",
   "description": "Azure-native AI coding agent for CMMC/CUI - Azure OpenAI Responses API in Azure US Government. Code context never leaves the Gov boundary.",
-  "version": "0.0.16",
+  "version": "0.0.17",
   "publisher": "entropex",
   "private": true,
   "license": "Apache-2.0",
@@ -171,6 +171,20 @@
           "scope": "application",
           "policy": { "name": "AzgovIdeAutoModeAllowTerminal", "minimumVersion": "1.90.0" },
           "markdownDescription": "In Auto mode, allow run_terminal to execute without approval. **Off by default**: even in Auto mode, shell commands still require approval unless the executable is on the command allowlist. This limits prompt-injection to code-execution. File edits still auto-apply in Auto mode. Org admins can lock this via policy."
+        },
+        "azgovIde.redactSecrets": {
+          "type": "boolean",
+          "default": true,
+          "scope": "application",
+          "policy": { "name": "AzgovIdeRedactSecrets", "minimumVersion": "1.90.0" },
+          "markdownDescription": "Mask secrets (keys, tokens, passwords, private keys, connection strings) in the audit log, change/approval cards, and tool output. Value-level masking keeps intent visible. Does not alter bytes written to disk or what the model receives. Org admins can lock this on via policy."
+        },
+        "azgovIde.costBudgetUsd": {
+          "type": "number",
+          "default": 0,
+          "scope": "application",
+          "policy": { "name": "AzgovIdeCostBudgetUsd", "minimumVersion": "1.90.0" },
+          "markdownDescription": "Maximum estimated USD spend per chat before the agent stops (uses `azgovIde.pricing` estimates). The agent refuses to start a turn once the chat reaches this budget and stops mid-turn if a turn would cross it. `0` disables. Org admins can lock this via policy."
         }
       }
     },
@@ -181,13 +195,15 @@
       { "command": "azgovIde.clearApiKey", "title": "AzureGov IDE: Clear break-glass API key" },
       { "command": "azgovIde.verifyAudit", "title": "AzureGov IDE: Verify audit log integrity" },
       { "command": "azgovIde.openAudit", "title": "AzureGov IDE: Open audit log" },
-      { "command": "azgovIde.generateEvidence", "title": "AzureGov IDE: Generate compliance evidence bundle" }
+      { "command": "azgovIde.generateEvidence", "title": "AzureGov IDE: Generate compliance evidence bundle" },
+      { "command": "azgovIde.rollbackLast", "title": "AzureGov IDE: Undo last agent file change" }
     ]
   },
   "scripts": {
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test",
     "package": "npx --yes @vscode/vsce package --no-dependencies"
   },
   "dependencies": {

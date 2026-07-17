@@ -2,6 +2,10 @@ import * as vscode from 'vscode';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
+import { redactIfEnabled } from './redact';
+
+/** Event fields whose string values may carry secrets; redacted before the log is written/forwarded. */
+const SENSITIVE_FIELDS = new Set(['args', 'result', 'command', 'output', 'message']);
 
 export interface Actor {
   source: string; // managed-identity | entra | api-key | unknown
@@ -235,6 +239,11 @@ export class AuditLog {
     if (!this.enabled()) return;
     try {
       await this.ready;
+      // Redact secrets from sensitive fields before they are hashed, written, or forwarded off-box.
+      const clean: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(fields)) {
+        clean[k] = SENSITIVE_FIELDS.has(k) && typeof v === 'string' ? redactIfEnabled(v) : v;
+      }
       const prevHash = this.lastHash;
       const base: Record<string, unknown> = {
         v: 1,
@@ -244,7 +253,7 @@ export class AuditLog {
         type,
         actor: this.actor,
         host: process.env['COMPUTERNAME'] ?? process.env['HOSTNAME'] ?? '',
-        ...fields,
+        ...clean,
         prevHash,
       };
       const hash = sha256(JSON.stringify(base) + prevHash);
@@ -254,7 +263,7 @@ export class AuditLog {
       await this.ctx.globalState.update(LAST_HASH_KEY, hash);
       await this.ctx.globalState.update(SEQ_KEY, this.seq);
       this.forwarder?.enqueue(toRow(ev));
-      const label = fields['path'] ?? fields['command'] ?? fields['tool'] ?? fields['responseId'] ?? '';
+      const label = clean['path'] ?? clean['command'] ?? clean['tool'] ?? clean['responseId'] ?? '';
       this.output.appendLine(`[audit] ${type} ${label}`.trimEnd());
     } catch (e) {
       this.output.appendLine(`[audit] ERROR writing event: ${(e as Error).message}`);

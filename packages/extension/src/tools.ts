@@ -4,6 +4,8 @@ import * as path from 'node:path';
 import { exec, spawn, type ChildProcess } from 'node:child_process';
 import type { Tool } from '@azgov-ide/agents-client';
 import { sha256 } from './audit';
+import { redactIfEnabled } from './redact';
+import { commandBlockReason, isAllowlisted, shouldGateShell } from './commandPolicy';
 
 export interface ChangePreview {
   kind: 'create' | 'edit' | 'folder' | 'command';
@@ -22,6 +24,8 @@ export interface ChangeResult {
   error?: string;
   exitCode?: number;
   output?: string;
+  /** Undo info for a file write: restore `before` (or delete when it was newly created). */
+  undo?: { path: string; rel: string; before: string | null };
 }
 
 export interface ToolDeps {
@@ -48,44 +52,6 @@ function confine(root: string, p: string): string {
   if (rel === '') return resolved;
   if (rel.startsWith('..') || path.isAbsolute(rel)) throw new Error(`path '${p}' escapes the workspace root`);
   return resolved;
-}
-
-const DENY: RegExp[] = [
-  /\brm\s+-rf\b/i,
-  /\bmkfs\b/i,
-  /\bformat\s+[a-z]:/i,
-  /\bcurl\b[^\n|]*\|\s*(sh|bash)\b/i,
-  /\bwget\b[^\n|]*\|\s*(sh|bash)\b/i,
-  /Invoke-Expression|iex\s/i,
-  /:\(\)\s*\{\s*:\|:&\s*\};:/,
-];
-
-/**
- * Ad-hoc network/egress tools. When azgovIde.blockNetworkCommands is on, these are refused so
- * CUI cannot be exfiltrated through the terminal. Deliberately NOT matched: package managers
- * (npm, pip, dotnet) and Azure CLI (`az`, `azcopy`) -- they reach known registries / in-boundary
- * Gov endpoints and are the tool's legitimate purpose. The sanctioned tunnel path is
- * `az network bastion tunnel`, not raw ssh/scp.
- */
-const NETWORK: RegExp[] = [
-  /\bcurl\b/i,
-  /\bwget\b/i,
-  /\bInvoke-WebRequest\b/i,
-  /\bInvoke-RestMethod\b/i,
-  /\biwr\b/i,
-  /\birm\b/i,
-  /\bStart-BitsTransfer\b/i,
-  /\bbitsadmin\b/i,
-  /\bcertutil\b[^\n]*-urlcache/i,
-  /\b(nc|ncat|netcat|telnet|ftp|tftp|sftp|scp|rsync|ssh)\b/i,
-];
-
-/** First executable token of a command, stripped of path and extension, lowercased. */
-function firstExe(command: string): string {
-  const m = command.trim().match(/^"([^"]+)"|^(\S+)/);
-  let tok = (m?.[1] ?? m?.[2] ?? '').trim();
-  tok = tok.split(/[\\/]/).pop() ?? tok;
-  return tok.replace(/\.(exe|cmd|bat|ps1|sh)$/i, '').toLowerCase();
 }
 
 /** Bounded line diff → added/removed counts + a compact hunk of changed lines. */
@@ -177,7 +143,7 @@ export function createTools(deps: ToolDeps): Tool[] {
    */
   const guarded = async (
     preview: ChangePreview,
-    apply: () => Promise<{ message: string; exitCode?: number; output?: string }>,
+    apply: () => Promise<{ message: string; exitCode?: number; output?: string; undo?: ChangeResult['undo'] }>,
     approvalOverride?: boolean,
   ): Promise<string> => {
     const need = approvalOverride ?? needsApproval;
@@ -189,7 +155,7 @@ export function createTools(deps: ToolDeps): Tool[] {
       }
       try {
         const r = await apply();
-        deps.changeDone?.(id, { ok: true, exitCode: r.exitCode, output: r.output });
+        deps.changeDone?.(id, { ok: true, exitCode: r.exitCode, output: r.output, undo: r.undo });
         return r.message;
       } catch (e) {
         deps.changeDone?.(id, { error: (e as Error).message });
@@ -304,7 +270,7 @@ export function createTools(deps: ToolDeps): Tool[] {
           path: rel,
           added,
           removed,
-          diff: hunk,
+          diff: redactIfEnabled(hunk), // display only; real bytes are written below
           beforeSha: existed ? sha256(oldContent) : undefined,
           afterSha: sha256(content),
         };
@@ -312,7 +278,10 @@ export function createTools(deps: ToolDeps): Tool[] {
           await fs.mkdir(path.dirname(file), { recursive: true });
           await fs.writeFile(file, content, 'utf8');
           deps.log(`wrote ${rel} (+${added} -${removed})`);
-          return { message: `Wrote ${rel} (+${added} -${removed}).` };
+          return {
+            message: `Wrote ${rel} (+${added} -${removed}).`,
+            undo: { path: file, rel, before: existed ? oldContent : null },
+          };
         });
       },
     },
@@ -336,31 +305,26 @@ export function createTools(deps: ToolDeps): Tool[] {
         const command = String(args['command']);
         const background = args['background'] === true;
 
-        // Layered command policy (roadmap P0-7).
-        if (DENY.some((r) => r.test(command))) return 'BLOCKED: command matches a denied pattern.';
-
+        // Layered command policy (roadmap P0-7) - see commandPolicy.ts.
         const policy = vscode.workspace.getConfiguration('azgovIde');
-        const allowlist = (policy.get<string[]>('commandAllowlist', []) ?? []).map((s) => s.toLowerCase());
+        const allowlist = policy.get<string[]>('commandAllowlist', []) ?? [];
         const blockNetwork = policy.get<boolean>('blockNetworkCommands', false);
         const autoAllowTerminal = policy.get<boolean>('autoModeAllowTerminal', false);
-        const exe = firstExe(command);
-        const onAllowlist = allowlist.length > 0 && allowlist.includes(exe);
 
-        if (allowlist.length > 0 && !onAllowlist) {
-          return `BLOCKED: '${exe}' is not on the command allowlist (azgovIde.commandAllowlist).`;
-        }
-        if (blockNetwork && NETWORK.some((r) => r.test(command))) {
-          return 'BLOCKED: network/egress commands are disabled by policy (azgovIde.blockNetworkCommands) so CUI cannot leave the boundary. Use az / az network bastion tunnel for sanctioned access.';
-        }
+        const blocked = commandBlockReason(command, { allowlist, blockNetwork });
+        if (blocked) return blocked;
 
-        // Hard Auto-mode gate: Auto mode auto-applies file edits, but shell execution still
-        // requires human approval unless the org opted in (autoModeAllowTerminal) or the
-        // executable is explicitly allowlisted. This blunts prompt-injection -> code execution.
-        const gateShell = deps.approveWrites === true && deps.autoApprove === true && !(autoAllowTerminal || onAllowlist);
+        const gateShell = shouldGateShell({
+          approveWrites: deps.approveWrites === true,
+          autoApprove: deps.autoApprove === true,
+          autoAllowTerminal,
+          onAllowlist: isAllowlisted(command, allowlist),
+        });
         const approvalOverride = needsApproval || gateShell;
 
-        return guarded({ kind: 'command', command }, async () => {
-          deps.log(`${background ? 'bg' : 'run'}: ${command}`);
+        // The card and audit see the redacted command; the real command is executed below.
+        return guarded({ kind: 'command', command: redactIfEnabled(command) }, async () => {
+          deps.log(`${background ? 'bg' : 'run'}: ${redactIfEnabled(command)}`);
           if (background) {
             const child = spawn(command, { cwd: root, shell: true, detached: true, stdio: 'ignore', windowsHide: true });
             child.unref();
@@ -369,11 +333,11 @@ export function createTools(deps: ToolDeps): Tool[] {
           }
           const { code, out, err, timedOut } = await runCmd(command, root, ctx.signal);
           const note = timedOut ? ' [killed after 120s — use background:true for long-lived commands]' : '';
-          const outputPreview = `exit ${code}${note}\n${out.slice(0, 4000)}${err ? `\n[stderr] ${err.slice(0, 2000)}` : ''}`;
+          const outputPreview = redactIfEnabled(`exit ${code}${note}\n${out.slice(0, 4000)}${err ? `\n[stderr] ${err.slice(0, 2000)}` : ''}`);
           return {
             message: `exit: ${code}${note}\n--- stdout ---\n${out.slice(0, 12000)}\n--- stderr ---\n${err.slice(0, 6000)}`,
             exitCode: code,
-            output: outputPreview,
+            output: outputPreview, // display only; model sees the un-redacted message
           };
         }, approvalOverride);
       },

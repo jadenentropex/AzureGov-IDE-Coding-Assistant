@@ -7,6 +7,8 @@ export interface ExtConfig {
   tenantId: string;
   store: boolean;
   approveWrites: boolean;
+  /** Max estimated USD per chat before the agent stops. 0 disables. */
+  costBudgetUsd: number;
 }
 
 export function readConfig(): ExtConfig {
@@ -18,6 +20,7 @@ export function readConfig(): ExtConfig {
     tenantId: c.get<string>('tenantId', ''),
     store: c.get<boolean>('store', false),
     approveWrites: c.get<boolean>('approveWrites', true),
+    costBudgetUsd: c.get<number>('costBudgetUsd', 0),
   };
 }
 

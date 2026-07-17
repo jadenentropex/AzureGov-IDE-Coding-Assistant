@@ -16,5 +16,5 @@ export { toRegistry } from './tools.js';
 export type { AgentBrain, CreateResponseOptions } from './agentBrain.js';
 export { ResponsesAdapter } from './responsesAdapter.js';
 export type { ResponsesAdapterConfig } from './responsesAdapter.js';
-export { runAgentTurn } from './agentLoop.js';
+export { runAgentTurn, SECURITY_PREAMBLE, UNTRUSTED_OUTPUT_NOTICE } from './agentLoop.js';
 export type { AgentEvent, RunAgentOptions, AgentResult, AgentUsage } from './agentLoop.js';
